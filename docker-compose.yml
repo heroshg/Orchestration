@@ -1,0 +1,113 @@
+version: "3.9"
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: fcg-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: fcg-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  users-api:
+    build:
+      context: ../UsersAPI
+      dockerfile: Dockerfile
+    container_name: fcg-users-api
+    ports:
+      - "5001:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Users: "Host=postgres;Port=5432;Database=users_db;Username=postgres;Password=postgres"
+      Jwt__Key: "change-this-secret-key-min-32-chars!!"
+      Jwt__Issuer: "FiapCloudGames"
+      Jwt__Audience: "FiapCloudGames"
+      RabbitMQ__Host: "rabbitmq"
+      RabbitMQ__Username: "guest"
+      RabbitMQ__Password: "guest"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  catalog-api:
+    build:
+      context: ../CatalogAPI
+      dockerfile: Dockerfile
+    container_name: fcg-catalog-api
+    ports:
+      - "5002:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Catalog: "Host=postgres;Port=5432;Database=catalog_db;Username=postgres;Password=postgres"
+      Jwt__Key: "change-this-secret-key-min-32-chars!!"
+      Jwt__Issuer: "FiapCloudGames"
+      Jwt__Audience: "FiapCloudGames"
+      RabbitMQ__Host: "rabbitmq"
+      RabbitMQ__Username: "guest"
+      RabbitMQ__Password: "guest"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  payments-api:
+    build:
+      context: ../PaymentsAPI
+      dockerfile: Dockerfile
+    container_name: fcg-payments-api
+    ports:
+      - "5003:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      RabbitMQ__Host: "rabbitmq"
+      RabbitMQ__Username: "guest"
+      RabbitMQ__Password: "guest"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  notifications-api:
+    build:
+      context: ../NotificationsAPI
+      dockerfile: Dockerfile
+    container_name: fcg-notifications-api
+    ports:
+      - "5004:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      RabbitMQ__Host: "rabbitmq"
+      RabbitMQ__Username: "guest"
+      RabbitMQ__Password: "guest"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+volumes:
+  postgres-data:

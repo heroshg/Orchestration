@@ -1,0 +1,58 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: payments-api-config
+  namespace: fcg
+data:
+  ASPNETCORE_ENVIRONMENT: "Production"
+  RabbitMQ__Host: "rabbitmq"
+  RabbitMQ__Username: "guest"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: payments-api-secret
+  namespace: fcg
+type: Opaque
+stringData:
+  RabbitMQ__Password: "guest"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments-api
+  namespace: fcg
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payments-api
+  template:
+    metadata:
+      labels:
+        app: payments-api
+    spec:
+      containers:
+        - name: payments-api
+          image: payments-api:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: payments-api-config
+            - secretRef:
+                name: payments-api-secret
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payments-api
+  namespace: fcg
+spec:
+  selector:
+    app: payments-api
+  ports:
+    - port: 80
+      targetPort: 8080
+  type: ClusterIP

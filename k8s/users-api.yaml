@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: users-api-config
+  namespace: fcg
+data:
+  ASPNETCORE_ENVIRONMENT: "Production"
+  Jwt__Issuer: "FiapCloudGames"
+  Jwt__Audience: "FiapCloudGames"
+  RabbitMQ__Host: "rabbitmq"
+  RabbitMQ__Username: "guest"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: users-api-secret
+  namespace: fcg
+type: Opaque
+stringData:
+  ConnectionStrings__Users: "Host=postgres;Port=5432;Database=users_db;Username=postgres;Password=postgres"
+  Jwt__Key: "change-this-secret-key-min-32-chars!!"
+  RabbitMQ__Password: "guest"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: users-api
+  namespace: fcg
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: users-api
+  template:
+    metadata:
+      labels:
+        app: users-api
+    spec:
+      containers:
+        - name: users-api
+          image: users-api:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: users-api-config
+            - secretRef:
+                name: users-api-secret
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: users-api
+  namespace: fcg
+spec:
+  selector:
+    app: users-api
+  ports:
+    - port: 80
+      targetPort: 8080
+  type: ClusterIP
