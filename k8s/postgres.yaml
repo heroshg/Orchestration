@@ -35,6 +35,12 @@ spec:
               value: "postgres"
             - name: POSTGRES_PASSWORD
               value: "Pg$Fgc2026!K9mN3bR7xQ"
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 10
           volumeMounts:
             - mountPath: /var/lib/postgresql/data
               name: postgres-storage

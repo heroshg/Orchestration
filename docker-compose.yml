@@ -5,7 +5,7 @@ services:
     container_name: fcg-postgres
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: "Pg$Fgc2026!K9mN3bR7xQ"
+      POSTGRES_PASSWORD: "postgres"
     ports:
       - "5432:5432"
     volumes:
@@ -24,12 +24,13 @@ services:
       - "15672:15672"
     environment:
       RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: "Rmq$Fgc2026!Q5bT8xM6Y"
+      RABBITMQ_DEFAULT_PASS: "Rmq$$Fgc2026!Q5bT8xM6Y"
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
       interval: 10s
-      timeout: 5s
-      retries: 10
+      timeout: 10s
+      retries: 15
+      start_period: 30s
 
   users-api:
     build:
@@ -40,18 +41,19 @@ services:
       - "5001:8080"
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      ConnectionStrings__Users: "Host=postgres;Port=5432;Database=users_db;Username=postgres;Password=Pg$Fgc2026!K9mN3bR7xQ"
-      Jwt__Key: "Jwt$Fgc2026!Xp7mK3nQ9wL5vR2tJ8bD4N"
+      ConnectionStrings__Users: "Host=postgres;Port=5432;Database=users_db;Username=postgres;Password=postgres"
+      Jwt__Key: "Jwt$$Fgc2026!Xp7mK3nQ9wL5vR2tJ8bD4N"
       Jwt__Issuer: "FiapCloudGames"
       Jwt__Audience: "FiapCloudGames"
       RabbitMQ__Host: "rabbitmq"
       RabbitMQ__Username: "guest"
-      RabbitMQ__Password: "Rmq$Fgc2026!Q5bT8xM6Y"
+      RabbitMQ__Password: "Rmq$$Fgc2026!Q5bT8xM6Y"
     depends_on:
       postgres:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+    restart: on-failure
 
   catalog-api:
     build:
@@ -62,18 +64,19 @@ services:
       - "5002:8080"
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      ConnectionStrings__Catalog: "Host=postgres;Port=5432;Database=catalog_db;Username=postgres;Password=Pg$Fgc2026!K9mN3bR7xQ"
-      Jwt__Key: "Jwt$Fgc2026!Xp7mK3nQ9wL5vR2tJ8bD4N"
+      ConnectionStrings__Catalog: "Host=postgres;Port=5432;Database=catalog_db;Username=postgres;Password=postgres"
+      Jwt__Key: "Jwt$$Fgc2026!Xp7mK3nQ9wL5vR2tJ8bD4N"
       Jwt__Issuer: "FiapCloudGames"
       Jwt__Audience: "FiapCloudGames"
       RabbitMQ__Host: "rabbitmq"
       RabbitMQ__Username: "guest"
-      RabbitMQ__Password: "Rmq$Fgc2026!Q5bT8xM6Y"
+      RabbitMQ__Password: "Rmq$$Fgc2026!Q5bT8xM6Y"
     depends_on:
       postgres:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+    restart: on-failure
 
   payments-api:
     build:
@@ -86,10 +89,11 @@ services:
       ASPNETCORE_ENVIRONMENT: Development
       RabbitMQ__Host: "rabbitmq"
       RabbitMQ__Username: "guest"
-      RabbitMQ__Password: "Rmq$Fgc2026!Q5bT8xM6Y"
+      RabbitMQ__Password: "Rmq$$Fgc2026!Q5bT8xM6Y"
     depends_on:
       rabbitmq:
         condition: service_healthy
+    restart: on-failure
 
   notifications-api:
     build:
@@ -102,10 +106,11 @@ services:
       ASPNETCORE_ENVIRONMENT: Development
       RabbitMQ__Host: "rabbitmq"
       RabbitMQ__Username: "guest"
-      RabbitMQ__Password: "Rmq$Fgc2026!Q5bT8xM6Y"
+      RabbitMQ__Password: "Rmq$$Fgc2026!Q5bT8xM6Y"
     depends_on:
       rabbitmq:
         condition: service_healthy
+    restart: on-failure
 
 volumes:
   postgres-data:
