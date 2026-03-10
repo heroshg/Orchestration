@@ -100,7 +100,7 @@ POST /api/games/purchase (CatalogAPI)
 
 | Serviço | Repositório |
 |---------|-------------|
-| UsersAPI | [UsersAPI](../UsersAPI) |
-| CatalogAPI | [CatalogAPI](../CatalogAPI) |
-| PaymentsAPI | [PaymentsAPI](../PaymentsAPI) |
-| NotificationsAPI | [NotificationsAPI](../NotificationsAPI) |
+| UsersAPI | [UsersAPI](https://github.com/heroshg/UsersAPI) |
+| CatalogAPI | [CatalogAPI](https://github.com/heroshg/CatalogAPI) |
+| PaymentsAPI | [PaymentsAPI](https://github.com/heroshg/PaymentsAPI) |
+| NotificationsAPI | [NotificationsAPI](https://github.com/heroshg/NotificationsAPI) |
