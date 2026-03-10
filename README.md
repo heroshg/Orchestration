@@ -317,17 +317,6 @@ k8s/
 
 ---
 
-## Repositórios dos Microsserviços
-
-| Serviço              | Porta | Responsabilidade                                    |
-|----------------------|-------|-----------------------------------------------------|
-| [UsersAPI](../UsersAPI)             | 5001  | Usuários, autenticação JWT, publica `UserCreatedEvent`        |
-| [CatalogAPI](../CatalogAPI)         | 5002  | Catálogo de jogos, biblioteca, fluxo de compra      |
-| [PaymentsAPI](../PaymentsAPI)       | 5003  | Processa pagamentos (simulado), publica resultado    |
-| [NotificationsAPI](../NotificationsAPI) | 5004  | Consome eventos e loga notificações por e-mail   |
-
----
-
 ## Contratos de Eventos
 
 Todos os eventos vivem no namespace `FiapCloudGames.Contracts.Events` e são duplicados em cada serviço que os produz ou consome.
