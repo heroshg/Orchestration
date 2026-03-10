@@ -343,3 +343,9 @@ UserCreatedEvent(UserId, Name, Email)
 OrderPlacedEvent(OrderId, UserId, UserEmail, GameId, GameName, Price)
 PaymentProcessedEvent(OrderId, UserId, UserEmail, GameId, GameName, Price, Status)
 ```
+| Serviço | Repositório |
+|---------|-------------|
+| UsersAPI | [UsersAPI](https://github.com/heroshg/UsersAPI) |
+| CatalogAPI | [CatalogAPI](https://github.com/heroshg/CatalogAPI) |
+| PaymentsAPI | [PaymentsAPI](https://github.com/heroshg/PaymentsAPI) |
+| NotificationsAPI | [NotificationsAPI](https://github.com/heroshg/NotificationsAPI) |
