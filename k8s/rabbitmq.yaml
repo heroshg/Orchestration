@@ -23,7 +23,7 @@ spec:
             - name: RABBITMQ_DEFAULT_USER
               value: "guest"
             - name: RABBITMQ_DEFAULT_PASS
-              value: "guest"
+              value: "Rmq$Fgc2026!Q5bT8xM6Y"
 ---
 apiVersion: v1
 kind: Service

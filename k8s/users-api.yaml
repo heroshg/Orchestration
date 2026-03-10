@@ -17,9 +17,9 @@ metadata:
   namespace: fcg
 type: Opaque
 stringData:
-  ConnectionStrings__Users: "Host=postgres;Port=5432;Database=users_db;Username=postgres;Password=postgres"
-  Jwt__Key: "change-this-secret-key-min-32-chars!!"
-  RabbitMQ__Password: "guest"
+  ConnectionStrings__Users: "Host=postgres;Port=5432;Database=users_db;Username=postgres;Password=Pg$Fgc2026!K9mN3bR7xQ"
+  Jwt__Key: "Jwt$Fgc2026!Xp7mK3nQ9wL5vR2tJ8bD4N"
+  RabbitMQ__Password: "Rmq$Fgc2026!Q5bT8xM6Y"
 ---
 apiVersion: apps/v1
 kind: Deployment

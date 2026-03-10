@@ -34,7 +34,7 @@ spec:
             - name: POSTGRES_USER
               value: "postgres"
             - name: POSTGRES_PASSWORD
-              value: "postgres"
+              value: "Pg$Fgc2026!K9mN3bR7xQ"
           volumeMounts:
             - mountPath: /var/lib/postgresql/data
               name: postgres-storage

@@ -15,7 +15,7 @@ metadata:
   namespace: fcg
 type: Opaque
 stringData:
-  RabbitMQ__Password: "guest"
+  RabbitMQ__Password: "Rmq$Fgc2026!Q5bT8xM6Y"
 ---
 apiVersion: apps/v1
 kind: Deployment
