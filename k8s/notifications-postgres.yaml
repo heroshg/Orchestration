@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: postgres-pvc
+  name: notifications-postgres-pvc
   namespace: fcg
 spec:
   accessModes:
@@ -13,28 +13,49 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: postgres
+  name: notifications-postgres
   namespace: fcg
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: postgres
+      app: notifications-postgres
   template:
     metadata:
       labels:
-        app: postgres
+        app: notifications-postgres
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        seccompProfile:
+          type: RuntimeDefault
       containers:
-        - name: postgres
+        - name: notifications-postgres
           image: postgres:16-alpine
           ports:
             - containerPort: 5432
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "FOWNER", "SETUID", "SETGID"]
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
           env:
             - name: POSTGRES_USER
               value: "postgres"
             - name: POSTGRES_PASSWORD
               value: "Pg$Fgc2026!K9mN3bR7xQ"
+            - name: POSTGRES_DB
+              value: "notifications_db"
           readinessProbe:
             exec:
               command: ["pg_isready", "-U", "postgres"]
@@ -43,20 +64,20 @@ spec:
             failureThreshold: 10
           volumeMounts:
             - mountPath: /var/lib/postgresql/data
-              name: postgres-storage
+              name: notifications-postgres-storage
       volumes:
-        - name: postgres-storage
+        - name: notifications-postgres-storage
           persistentVolumeClaim:
-            claimName: postgres-pvc
+            claimName: notifications-postgres-pvc
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: postgres
+  name: notifications-postgres
   namespace: fcg
 spec:
   selector:
-    app: postgres
+    app: notifications-postgres
   ports:
     - port: 5432
       targetPort: 5432

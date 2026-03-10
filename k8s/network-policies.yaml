@@ -1,0 +1,179 @@
+# Nega todo tráfego ingress por padrão no namespace fcg
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: fcg
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+# users-api: aceita ingress de qualquer origem (HTTP externo via Service)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-users-api-ingress
+  namespace: fcg
+spec:
+  podSelector:
+    matchLabels:
+      app: users-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - {}
+---
+# catalog-api: aceita ingress de qualquer origem
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-catalog-api-ingress
+  namespace: fcg
+spec:
+  podSelector:
+    matchLabels:
+      app: catalog-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - {}
+---
+# payments-api: aceita ingress de qualquer origem
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-payments-api-ingress
+  namespace: fcg
+spec:
+  podSelector:
+    matchLabels:
+      app: payments-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - {}
+---
+# notifications-api: aceita ingress de qualquer origem
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-notifications-api-ingress
+  namespace: fcg
+spec:
+  podSelector:
+    matchLabels:
+      app: notifications-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - {}
+---
+# users-postgres: aceita ingress APENAS do users-api na porta 5432
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-users-postgres-ingress
+  namespace: fcg
+spec:
+  podSelector:
+    matchLabels:
+      app: users-postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: users-api
+      ports:
+        - port: 5432
+---
+# catalog-postgres: aceita ingress APENAS do catalog-api na porta 5432
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-catalog-postgres-ingress
+  namespace: fcg
+spec:
+  podSelector:
+    matchLabels:
+      app: catalog-postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: catalog-api
+      ports:
+        - port: 5432
+---
+# payments-postgres: aceita ingress APENAS do payments-api na porta 5432
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-payments-postgres-ingress
+  namespace: fcg
+spec:
+  podSelector:
+    matchLabels:
+      app: payments-postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: payments-api
+      ports:
+        - port: 5432
+---
+# notifications-postgres: aceita ingress APENAS do notifications-api na porta 5432
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-notifications-postgres-ingress
+  namespace: fcg
+spec:
+  podSelector:
+    matchLabels:
+      app: notifications-postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: notifications-api
+      ports:
+        - port: 5432
+---
+# rabbitmq: aceita ingress de todas as APIs na porta 5672 (AMQP)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-rabbitmq-ingress
+  namespace: fcg
+spec:
+  podSelector:
+    matchLabels:
+      app: rabbitmq
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: users-api
+        - podSelector:
+            matchLabels:
+              app: catalog-api
+        - podSelector:
+            matchLabels:
+              app: payments-api
+        - podSelector:
+            matchLabels:
+              app: notifications-api
+      ports:
+        - port: 5672

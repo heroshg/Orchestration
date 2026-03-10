@@ -1,3 +1,13 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rabbitmq-secret
+  namespace: fcg
+type: Opaque
+stringData:
+  RABBITMQ_DEFAULT_USER: "fcg_rmq"
+  RABBITMQ_DEFAULT_PASS: "Rmq$Fgc2026!Q5bT8xM6Y"
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -13,17 +23,33 @@ spec:
       labels:
         app: rabbitmq
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: rabbitmq
           image: rabbitmq:3.13-management-alpine
           ports:
             - containerPort: 5672
             - containerPort: 15672
-          env:
-            - name: RABBITMQ_DEFAULT_USER
-              value: "guest"
-            - name: RABBITMQ_DEFAULT_PASS
-              value: "Rmq$Fgc2026!Q5bT8xM6Y"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          envFrom:
+            - secretRef:
+                name: rabbitmq-secret
           readinessProbe:
             tcpSocket:
               port: 5672
@@ -36,6 +62,12 @@ spec:
             initialDelaySeconds: 60
             periodSeconds: 10
             failureThreshold: 5
+          volumeMounts:
+            - name: rabbitmq-data
+              mountPath: /var/lib/rabbitmq
+      volumes:
+        - name: rabbitmq-data
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

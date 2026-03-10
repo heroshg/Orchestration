@@ -1,15 +1,103 @@
 services:
 
-  postgres:
+  payments-postgres:
     image: postgres:16-alpine
-    container_name: fcg-postgres
+    container_name: fcg-payments-postgres
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: "postgres"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: payments_db
+    ports:
+      - "5434:5432"
+    volumes:
+      - payments-postgres-data:/var/lib/postgresql/data
+    networks:
+      - payments-db
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  notifications-postgres:
+    image: postgres:16-alpine
+    container_name: fcg-notifications-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: notifications_db
+    ports:
+      - "5435:5432"
+    volumes:
+      - notifications-postgres-data:/var/lib/postgresql/data
+    networks:
+      - notifications-db
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  users-postgres:
+    image: postgres:16-alpine
+    container_name: fcg-users-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: users_db
     ports:
       - "5432:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - users-postgres-data:/var/lib/postgresql/data
+    networks:
+      - users-db
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  catalog-postgres:
+    image: postgres:16-alpine
+    container_name: fcg-catalog-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: catalog_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - catalog-postgres-data:/var/lib/postgresql/data
+    networks:
+      - catalog-db
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -20,11 +108,19 @@ services:
     image: rabbitmq:3.13-management-alpine
     container_name: fcg-rabbitmq
     ports:
-      - "5672:5672"
       - "15672:15672"
     environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: "Rmq$$Fgc2026!Q5bT8xM6Y"
+      RABBITMQ_DEFAULT_USER: "${RABBITMQ_USER}"
+      RABBITMQ_DEFAULT_PASS: "${RABBITMQ_PASSWORD}"
+    networks:
+      - messaging
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
       interval: 10s
@@ -41,15 +137,28 @@ services:
       - "5001:8080"
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      ConnectionStrings__Users: "Host=postgres;Port=5432;Database=users_db;Username=postgres;Password=postgres"
-      Jwt__Key: "Jwt$$Fgc2026!Xp7mK3nQ9wL5vR2tJ8bD4N"
+      ConnectionStrings__Users: "Host=users-postgres;Port=5432;Database=users_db;Username=postgres;Password=${POSTGRES_PASSWORD}"
+      Jwt__Key: "${JWT_KEY}"
       Jwt__Issuer: "FiapCloudGames"
       Jwt__Audience: "FiapCloudGames"
       RabbitMQ__Host: "rabbitmq"
-      RabbitMQ__Username: "guest"
-      RabbitMQ__Password: "Rmq$$Fgc2026!Q5bT8xM6Y"
+      RabbitMQ__Username: "${RABBITMQ_USER}"
+      RabbitMQ__Password: "${RABBITMQ_PASSWORD}"
+    networks:
+      - users-db
+      - messaging
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
     depends_on:
-      postgres:
+      users-postgres:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
@@ -64,15 +173,28 @@ services:
       - "5002:8080"
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      ConnectionStrings__Catalog: "Host=postgres;Port=5432;Database=catalog_db;Username=postgres;Password=postgres"
-      Jwt__Key: "Jwt$$Fgc2026!Xp7mK3nQ9wL5vR2tJ8bD4N"
+      ConnectionStrings__Catalog: "Host=catalog-postgres;Port=5432;Database=catalog_db;Username=postgres;Password=${POSTGRES_PASSWORD}"
+      Jwt__Key: "${JWT_KEY}"
       Jwt__Issuer: "FiapCloudGames"
       Jwt__Audience: "FiapCloudGames"
       RabbitMQ__Host: "rabbitmq"
-      RabbitMQ__Username: "guest"
-      RabbitMQ__Password: "Rmq$$Fgc2026!Q5bT8xM6Y"
+      RabbitMQ__Username: "${RABBITMQ_USER}"
+      RabbitMQ__Password: "${RABBITMQ_PASSWORD}"
+    networks:
+      - catalog-db
+      - messaging
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
     depends_on:
-      postgres:
+      catalog-postgres:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
@@ -87,10 +209,26 @@ services:
       - "5003:8080"
     environment:
       ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Payments: "Host=payments-postgres;Port=5432;Database=payments_db;Username=postgres;Password=${POSTGRES_PASSWORD}"
       RabbitMQ__Host: "rabbitmq"
-      RabbitMQ__Username: "guest"
-      RabbitMQ__Password: "Rmq$$Fgc2026!Q5bT8xM6Y"
+      RabbitMQ__Username: "${RABBITMQ_USER}"
+      RabbitMQ__Password: "${RABBITMQ_PASSWORD}"
+    networks:
+      - payments-db
+      - messaging
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
     depends_on:
+      payments-postgres:
+        condition: service_healthy
       rabbitmq:
         condition: service_healthy
     restart: on-failure
@@ -104,13 +242,44 @@ services:
       - "5004:8080"
     environment:
       ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Notifications: "Host=notifications-postgres;Port=5432;Database=notifications_db;Username=postgres;Password=${POSTGRES_PASSWORD}"
       RabbitMQ__Host: "rabbitmq"
-      RabbitMQ__Username: "guest"
-      RabbitMQ__Password: "Rmq$$Fgc2026!Q5bT8xM6Y"
+      RabbitMQ__Username: "${RABBITMQ_USER}"
+      RabbitMQ__Password: "${RABBITMQ_PASSWORD}"
+    networks:
+      - notifications-db
+      - messaging
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
     depends_on:
+      notifications-postgres:
+        condition: service_healthy
       rabbitmq:
         condition: service_healthy
     restart: on-failure
 
+networks:
+  users-db:
+    driver: bridge
+  catalog-db:
+    driver: bridge
+  payments-db:
+    driver: bridge
+  notifications-db:
+    driver: bridge
+  messaging:
+    driver: bridge
+
 volumes:
-  postgres-data:
+  users-postgres-data:
+  catalog-postgres-data:
+  payments-postgres-data:
+  notifications-postgres-data:

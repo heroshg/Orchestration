@@ -6,3 +6,4 @@ obj/
 *.userprefs
 appsettings.Development.json
 *.local.json
+.env
