@@ -56,6 +56,8 @@ spec:
               value: "Pg$Fgc2026!K9mN3bR7xQ"
             - name: POSTGRES_DB
               value: "catalog_db"
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
           readinessProbe:
             exec:
               command: ["pg_isready", "-U", "postgres"]
