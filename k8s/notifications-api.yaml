@@ -16,7 +16,7 @@ metadata:
 type: Opaque
 stringData:
   ConnectionStrings__Notifications: "Host=notifications-postgres;Port=5432;Database=notifications_db;Username=postgres;Password=Pg$Fgc2026!K9mN3bR7xQ"
-  RabbitMQ__Password: "Rmq$Fgc2026!Q5bT8xM6Y"
+  RabbitMQ__Password: "FcgRmq2026"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -59,8 +59,8 @@ spec:
               drop: ["ALL"]
       containers:
         - name: notifications-api
-          image: notifications-api:latest
-          imagePullPolicy: Never
+          image: localhost:5000/notifications-api:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
           securityContext:

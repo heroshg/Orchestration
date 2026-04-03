@@ -19,7 +19,7 @@ type: Opaque
 stringData:
   ConnectionStrings__Users: "Host=users-postgres;Port=5432;Database=users_db;Username=postgres;Password=Pg$Fgc2026!K9mN3bR7xQ"
   Jwt__Key: "Jwt$Fgc2026!Xp7mK3nQ9wL5vR2tJ8bD4N"
-  RabbitMQ__Password: "Rmq$Fgc2026!Q5bT8xM6Y"
+  RabbitMQ__Password: "FcgRmq2026"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -62,8 +62,8 @@ spec:
               drop: ["ALL"]
       containers:
         - name: users-api
-          image: users-api:latest
-          imagePullPolicy: Never
+          image: localhost:5000/users-api:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
           securityContext:

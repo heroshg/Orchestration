@@ -6,7 +6,7 @@ metadata:
 type: Opaque
 stringData:
   RABBITMQ_DEFAULT_USER: "fcg_rmq"
-  RABBITMQ_DEFAULT_PASS: "Rmq$Fgc2026!Q5bT8xM6Y"
+  RABBITMQ_DEFAULT_PASS: "FcgRmq2026"
 ---
 apiVersion: apps/v1
 kind: Deployment
