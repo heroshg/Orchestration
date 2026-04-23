@@ -10,10 +10,9 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 $services = @(
-    @{ Image = "users-api";         Context = "..\UsersAPI" },
-    @{ Image = "catalog-api";       Context = "..\CatalogAPI" },
-    @{ Image = "payments-api";      Context = "..\PaymentsAPI" },
-    @{ Image = "notifications-api"; Context = "..\NotificationsAPI" }
+    @{ Image = "users-api";    Context = "..\UsersAPI" },
+    @{ Image = "catalog-api";  Context = "..\CatalogAPI" },
+    @{ Image = "payments-api"; Context = "..\PaymentsAPI" }
 )
 
 foreach ($svc in $services) {

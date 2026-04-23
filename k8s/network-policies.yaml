@@ -9,7 +9,6 @@ spec:
   policyTypes:
     - Ingress
 ---
-# users-api: aceita ingress de qualquer origem (HTTP externo via Service)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -22,9 +21,11 @@ spec:
   policyTypes:
     - Ingress
   ingress:
-    - {}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
 ---
-# catalog-api: aceita ingress de qualquer origem
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -37,9 +38,11 @@ spec:
   policyTypes:
     - Ingress
   ingress:
-    - {}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
 ---
-# payments-api: aceita ingress de qualquer origem
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -52,22 +55,10 @@ spec:
   policyTypes:
     - Ingress
   ingress:
-    - {}
----
-# notifications-api: aceita ingress de qualquer origem
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-notifications-api-ingress
-  namespace: fcg
-spec:
-  podSelector:
-    matchLabels:
-      app: notifications-api
-  policyTypes:
-    - Ingress
-  ingress:
-    - {}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: fcg
 ---
 # users-postgres: aceita ingress APENAS do users-api na porta 5432
 apiVersion: networking.k8s.io/v1
@@ -129,27 +120,8 @@ spec:
       ports:
         - port: 5432
 ---
-# notifications-postgres: aceita ingress APENAS do notifications-api na porta 5432
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-notifications-postgres-ingress
-  namespace: fcg
-spec:
-  podSelector:
-    matchLabels:
-      app: notifications-postgres
-  policyTypes:
-    - Ingress
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              app: notifications-api
-      ports:
-        - port: 5432
----
-# rabbitmq: aceita ingress de todas as APIs na porta 5672 (AMQP)
+# rabbitmq: aceita ingress de users-api, catalog-api e payments-api na porta 5672
+# Nota: notifications-api foi removido (migrado para AWS Lambda + SQS)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -172,8 +144,57 @@ spec:
         - podSelector:
             matchLabels:
               app: payments-api
-        - podSelector:
-            matchLabels:
-              app: notifications-api
       ports:
         - port: 5672
+---
+# redis: aceita ingress de users-api e catalog-api na porta 6379
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-redis-ingress
+  namespace: fcg
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: users-api
+        - podSelector:
+            matchLabels:
+              app: catalog-api
+      ports:
+        - port: 6379
+---
+# datadog-agent: aceita tráfego APM (8126/tcp) e DogStatsD (8125/udp) vindo das APIs
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-datadog-agent-ingress
+  namespace: fcg
+spec:
+  podSelector:
+    matchLabels:
+      app: datadog-agent
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: users-api
+        - podSelector:
+            matchLabels:
+              app: catalog-api
+        - podSelector:
+            matchLabels:
+              app: payments-api
+      ports:
+        - port: 8126
+          protocol: TCP
+        - port: 8125
+          protocol: UDP

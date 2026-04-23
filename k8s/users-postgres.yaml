@@ -53,7 +53,10 @@ spec:
             - name: POSTGRES_USER
               value: "postgres"
             - name: POSTGRES_PASSWORD
-              value: "Pg$Fgc2026!K9mN3bR7xQ"
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: password
             - name: POSTGRES_DB
               value: "users_db"
             - name: PGDATA

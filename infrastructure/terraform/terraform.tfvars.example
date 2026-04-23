@@ -1,0 +1,11 @@
+environment          = "production"
+aws_region           = "us-east-1"
+users_api_url        = "https://your-users-api-lb-url"
+catalog_api_url      = "https://your-catalog-api-lb-url"
+jwt_key              = "your-jwt-secret-min-32-chars"
+jwt_issuer           = "FiapCloudGames"
+jwt_audience         = "FiapCloudGames"
+dd_api_key           = "your-datadog-api-key"
+dd_app_key           = "your-datadog-app-key"   # Settings → API Keys → New Application Key
+dd_site              = "datadoghq.com"
+dd_extension_version = "62"

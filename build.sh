@@ -14,7 +14,6 @@ services=(
   "users-api:../UsersAPI"
   "catalog-api:../CatalogAPI"
   "payments-api:../PaymentsAPI"
-  "notifications-api:../NotificationsAPI"
 )
 
 for entry in "${services[@]}"; do

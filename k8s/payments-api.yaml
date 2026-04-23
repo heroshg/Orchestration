@@ -9,6 +9,19 @@ data:
   Jwt__Audience: "FiapCloudGames"
   RabbitMQ__Host: "rabbitmq"
   RabbitMQ__Username: "fcg_rmq"
+  AWS__Region: "us-east-1"
+  DD_SERVICE: "payments-api"
+  DD_ENV: "production"
+  DD_VERSION: "1.0.0"
+  DD_LOGS_INJECTION: "true"
+  DD_RUNTIME_METRICS_ENABLED: "true"
+  DD_TRACE_SAMPLE_RATE: "1.0"
+  DD_PROFILING_ENABLED: "true"
+  DD_DOTNET_TRACER_HOME: "/app/datadog"
+  CORECLR_ENABLE_PROFILING: "1"
+  CORECLR_PROFILER: "{846F5F1C-F9AE-4B07-969E-05C26BC060D8}"
+  CORECLR_PROFILER_PATH: "/app/datadog/linux-musl-x64/Datadog.Trace.ClrProfiler.Native.so"
+  LD_PRELOAD: "/app/datadog/linux-musl-x64/Datadog.Linux.ApiWrapper.x64.so"
 ---
 apiVersion: v1
 kind: Secret
@@ -20,6 +33,7 @@ stringData:
   ConnectionStrings__Payments: "Host=payments-postgres;Port=5432;Database=payments_db;Username=postgres;Password=Pg$Fgc2026!K9mN3bR7xQ"
   Jwt__Key: "Jwt$Fgc2026!Xp7mK3nQ9wL5vR2tJ8bD4N"
   RabbitMQ__Password: "FcgRmq2026"
+  AWS__SQS__PaymentProcessedQueueUrl: ""
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -62,7 +76,7 @@ spec:
               drop: ["ALL"]
       containers:
         - name: payments-api
-          image: localhost:5000/payments-api:latest
+          image: payments-api:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
@@ -73,16 +87,27 @@ spec:
               drop: ["ALL"]
           resources:
             requests:
-              memory: "128Mi"
-              cpu: "100m"
-            limits:
               memory: "256Mi"
-              cpu: "500m"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "750m"
           envFrom:
             - configMapRef:
                 name: payments-api-config
             - secretRef:
                 name: payments-api-secret
+          env:
+            - name: DD_AGENT_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: DD_TRACE_AGENT_PORT
+              value: "8126"
+            - name: DD_DOGSTATSD_PORT
+              value: "8125"
+            - name: DD_TRACE_LOG_DIRECTORY
+              value: "/tmp/dd-logs"
           volumeMounts:
             - name: tmp
               mountPath: /tmp
