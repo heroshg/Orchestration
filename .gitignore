@@ -5,5 +5,15 @@ obj/
 *.suo
 *.userprefs
 appsettings.Development.json
+appsettings.Production.json
+appsettings.Local.json
+appsettings.Staging.json
 *.local.json
+secrets.json
 .env
+*.pfx
+*.p12
+
+# Kubernetes secret manifests — não commitar, usar *.example como template
+k8s/*-secret.yaml
+k8s/*-secrets.yaml

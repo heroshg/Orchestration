@@ -1,17 +1,17 @@
 locals {
-  db_host      = "172.17.0.1"
-  db_user      = "postgres"
-  db_password  = "uK9$pM4!rL7@qN2#Ws"
-  rmq_host     = "172.17.0.1"
-  rmq_user     = "fcg"
-  rmq_password = "rQ5$$bT8!xW3@kM6#Yx"
+  db_host       = "172.17.0.1"
+  db_user       = "postgres"
+  db_password   = var.db_password
+  rmq_host      = "172.17.0.1"
+  rmq_user      = "fcg"
+  rmq_password  = var.rmq_password
   dd_agent_host = "172.17.0.1"
 
   pg_dd_instances = jsonencode([{
     host                          = "%%host%%"
     port                          = 5432
     username                      = "postgres"
-    password                      = "uK9$pM4!rL7@qN2#Ws"
+    password                      = var.db_password
     dbname                        = "postgres"
     collect_activity_metrics      = true
     collect_database_size_metrics = true
@@ -20,7 +20,7 @@ locals {
   rmq_dd_instances = jsonencode([{
     rabbitmq_api_endpoint = "http://%%host%%:15672/api/"
     username              = "fcg"
-    password              = "rQ5$bT8!xW3@kM6#Yx"
+    password              = var.rmq_password
     queues = [
       "fcg-production-user-created-events",
       "fcg-production-payment-processed-events",
@@ -189,7 +189,7 @@ resource "aws_ecs_task_definition" "users_api" {
       { name = "RabbitMQ__Host",           value = local.rmq_host },
       { name = "RabbitMQ__Username",       value = local.rmq_user },
       { name = "RabbitMQ__Password",       value = local.rmq_password },
-      { name = "Jwt__Key",                 value = var.jwt_key },
+      { name = "Jwt__Key",                 value = var.jwt_key_users },
       { name = "Jwt__Issuer",              value = "FiapCloudGames" },
       { name = "Jwt__Audience",            value = "FiapCloudGames" }
     ]
@@ -257,7 +257,7 @@ resource "aws_ecs_task_definition" "catalog_api" {
       { name = "RabbitMQ__Host",             value = local.rmq_host },
       { name = "RabbitMQ__Username",         value = local.rmq_user },
       { name = "RabbitMQ__Password",         value = local.rmq_password },
-      { name = "Jwt__Key",                   value = var.jwt_key },
+      { name = "Jwt__Key",                   value = var.jwt_key_catalog },
       { name = "Jwt__Issuer",                value = "FiapCloudGames" },
       { name = "Jwt__Audience",              value = "FiapCloudGames" }
     ]

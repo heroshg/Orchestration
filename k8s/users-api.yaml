@@ -24,19 +24,6 @@ data:
   CORECLR_PROFILER_PATH: "/app/datadog/linux-musl-x64/Datadog.Trace.ClrProfiler.Native.so"
   LD_PRELOAD: "/app/datadog/linux-musl-x64/Datadog.Linux.ApiWrapper.x64.so"
 ---
-apiVersion: v1
-kind: Secret
-metadata:
-  name: users-api-secret
-  namespace: fcg
-type: Opaque
-stringData:
-  ConnectionStrings__Users: "Host=users-postgres;Port=5432;Database=users_db;Username=postgres;Password=Pg$Fgc2026!K9mN3bR7xQ"
-  Jwt__Key: "Jwt$Fgc2026!Xp7mK3nQ9wL5vR2tJ8bD4N"
-  RabbitMQ__Password: "FcgRmq2026"
-  Redis__ConnectionString: "redis:6379,password=FcgRedis2026!K9mN"
-  AWS__SQS__UserCreatedQueueUrl: ""
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:

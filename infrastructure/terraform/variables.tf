@@ -15,6 +15,32 @@ variable "aws_region" {
 variable "jwt_key" {
   type      = string
   sensitive = true
+  default   = ""
+}
+
+variable "jwt_key_users" {
+  type      = string
+  sensitive = true
+}
+
+variable "jwt_key_catalog" {
+  type      = string
+  sensitive = true
+}
+
+variable "jwt_key_payments" {
+  type      = string
+  sensitive = true
+}
+
+variable "db_password" {
+  type      = string
+  sensitive = true
+}
+
+variable "rmq_password" {
+  type      = string
+  sensitive = true
 }
 
 variable "jwt_issuer" {

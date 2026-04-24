@@ -191,7 +191,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__Users: "Host=users-postgres;Port=5432;Database=users_db;Username=postgres;Password=${POSTGRES_PASSWORD}"
-      Jwt__Key: "${JWT_KEY}"
+      Jwt__Key: "${JWT_KEY_USERS}"
       Jwt__Issuer: "FiapCloudGames"
       Jwt__Audience: "FiapCloudGames"
       # Desenvolvimento local: usa RabbitMQ
@@ -256,7 +256,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__Catalog: "Host=catalog-postgres;Port=5432;Database=catalog_db;Username=postgres;Password=${POSTGRES_PASSWORD}"
-      Jwt__Key: "${JWT_KEY}"
+      Jwt__Key: "${JWT_KEY_CATALOG}"
       Jwt__Issuer: "FiapCloudGames"
       Jwt__Audience: "FiapCloudGames"
       RabbitMQ__Host: "rabbitmq"
@@ -316,7 +316,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__Payments: "Host=payments-postgres;Port=5432;Database=payments_db;Username=postgres;Password=${POSTGRES_PASSWORD}"
-      Jwt__Key: "${JWT_KEY}"
+      Jwt__Key: "${JWT_KEY_PAYMENTS}"
       Jwt__Issuer: "FiapCloudGames"
       Jwt__Audience: "FiapCloudGames"
       # Desenvolvimento local: usa RabbitMQ
