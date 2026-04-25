@@ -60,10 +60,15 @@ resource "aws_ecs_task_definition" "postgres" {
       containerPath = "/var/lib/postgresql/data"
       readOnly      = false
     }]
+    # Se já houver dados (EBS com senha diferente), força trust auth antes de iniciar.
+    # Para init fresh, POSTGRES_HOST_AUTH_METHOD já cuida disso.
+    entryPoint = ["sh", "-c"]
+    command    = ["[ -f /var/lib/postgresql/data/pg_hba.conf ] && sed -i 's/scram-sha-256/trust/g' /var/lib/postgresql/data/pg_hba.conf; exec docker-entrypoint.sh postgres"]
     environment = [
-      { name = "POSTGRES_USER",     value = local.db_user },
-      { name = "POSTGRES_PASSWORD", value = local.db_password },
-      { name = "POSTGRES_DB",       value = "postgres" }
+      { name = "POSTGRES_USER",             value = local.db_user },
+      { name = "POSTGRES_PASSWORD",         value = local.db_password },
+      { name = "POSTGRES_DB",               value = "postgres" },
+      { name = "POSTGRES_HOST_AUTH_METHOD", value = "trust" }
     ]
     dockerLabels = {
       "com.datadoghq.ad.check_names"  = "[\"postgres\"]"
@@ -189,9 +194,11 @@ resource "aws_ecs_task_definition" "users_api" {
       { name = "RabbitMQ__Host",           value = local.rmq_host },
       { name = "RabbitMQ__Username",       value = local.rmq_user },
       { name = "RabbitMQ__Password",       value = local.rmq_password },
-      { name = "Jwt__Key",                 value = var.jwt_key_users },
-      { name = "Jwt__Issuer",              value = "FiapCloudGames" },
-      { name = "Jwt__Audience",            value = "FiapCloudGames" }
+      { name = "Jwt__Key",                      value = var.jwt_key_users },
+      { name = "Jwt__Issuer",                   value = "FiapCloudGames" },
+      { name = "Jwt__Audience",                 value = "FiapCloudGames" },
+      { name = "AWS__Region",                   value = var.aws_region },
+      { name = "AWS__SQS__UserCreatedQueueUrl", value = aws_sqs_queue.user_created.url }
     ]
     logConfiguration = {
       logDriver = "awslogs"
@@ -257,7 +264,7 @@ resource "aws_ecs_task_definition" "catalog_api" {
       { name = "RabbitMQ__Host",             value = local.rmq_host },
       { name = "RabbitMQ__Username",         value = local.rmq_user },
       { name = "RabbitMQ__Password",         value = local.rmq_password },
-      { name = "Jwt__Key",                   value = var.jwt_key_catalog },
+      { name = "Jwt__Key",                   value = var.jwt_key_users },
       { name = "Jwt__Issuer",                value = "FiapCloudGames" },
       { name = "Jwt__Audience",              value = "FiapCloudGames" }
     ]
@@ -278,6 +285,76 @@ resource "aws_ecs_service" "catalog_api" {
   name                               = "${local.name_prefix}-catalog-api"
   cluster                            = aws_ecs_cluster.fcg.id
   task_definition                    = aws_ecs_task_definition.catalog_api.arn
+  desired_count                      = 1
+  deployment_minimum_healthy_percent = 0
+  deployment_maximum_percent         = 100
+  tags                               = local.common_tags
+}
+
+# ── PaymentsAPI ───────────────────────────────────────────────────────────────
+
+resource "aws_cloudwatch_log_group" "payments_api" {
+  name              = "/ecs/${local.name_prefix}-payments-api"
+  retention_in_days = 7
+  tags              = local.common_tags
+}
+
+resource "aws_ecs_task_definition" "payments_api" {
+  family       = "${local.name_prefix}-payments-api"
+  network_mode = "bridge"
+
+  container_definitions = jsonencode([{
+    name      = "payments-api"
+    image     = "${aws_ecr_repository.payments_api.repository_url}:latest"
+    essential = true
+    memoryReservation = 192
+    portMappings = [{
+      containerPort = 8080
+      hostPort      = 8082
+      protocol      = "tcp"
+    }]
+    environment = [
+      { name = "ASPNETCORE_ENVIRONMENT",           value = "Production" },
+      { name = "ConnectionStrings__Payments",       value = "Host=${local.db_host};Port=5432;Database=payments_db;Username=${local.db_user};Password=${local.db_password}" },
+      { name = "DD_AGENT_HOST",                    value = local.dd_agent_host },
+      { name = "DD_TRACE_AGENT_PORT",              value = "8126" },
+      { name = "DD_TRACE_ENABLED",                 value = "true" },
+      { name = "DD_SERVICE",                       value = "payments-api" },
+      { name = "DD_ENV",                           value = var.environment },
+      { name = "DD_VERSION",                       value = "1.0.0" },
+      { name = "DD_LOGS_INJECTION",                value = "true" },
+      { name = "DD_RUNTIME_METRICS_ENABLED",       value = "true" },
+      { name = "CORECLR_ENABLE_PROFILING",         value = "1" },
+      { name = "CORECLR_PROFILER",                 value = "{846F5F1C-F9AE-4B07-969E-05C26BC060D8}" },
+      { name = "CORECLR_PROFILER_PATH",            value = "/opt/datadog/linux-musl-x64/Datadog.Trace.ClrProfiler.Native.so" },
+      { name = "DD_DOTNET_TRACER_HOME",            value = "/opt/datadog" },
+      { name = "LD_PRELOAD",                       value = "/opt/datadog/linux-musl-x64/Datadog.Linux.ApiWrapper.x64.so" },
+      { name = "RabbitMQ__Host",                   value = local.rmq_host },
+      { name = "RabbitMQ__Username",               value = local.rmq_user },
+      { name = "RabbitMQ__Password",               value = local.rmq_password },
+      { name = "Jwt__Key",                         value = var.jwt_key_users },
+      { name = "Jwt__Issuer",                      value = "FiapCloudGames" },
+      { name = "Jwt__Audience",                    value = "FiapCloudGames" },
+      { name = "AWS__Region",                      value = var.aws_region },
+      { name = "AWS__SQS__PaymentProcessedQueueUrl", value = aws_sqs_queue.payment_processed.url }
+    ]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = "/ecs/${local.name_prefix}-payments-api"
+        awslogs-region        = var.aws_region
+        awslogs-stream-prefix = "ecs"
+      }
+    }
+  }])
+
+  tags = local.common_tags
+}
+
+resource "aws_ecs_service" "payments_api" {
+  name                               = "${local.name_prefix}-payments-api"
+  cluster                            = aws_ecs_cluster.fcg.id
+  task_definition                    = aws_ecs_task_definition.payments_api.arn
   desired_count                      = 1
   deployment_minimum_healthy_percent = 0
   deployment_maximum_percent         = 100

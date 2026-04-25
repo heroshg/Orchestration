@@ -48,6 +48,16 @@ log_info "Criando secrets do PostgreSQL..."
 kubectl apply -f "$SCRIPT_DIR/postgres-secrets.yaml"
 log_success "postgres-secret criado"
 
+log_info "Aplicando secrets das APIs e serviços..."
+for secret_file in rabbitmq-secret.yaml redis-secret.yaml users-api-secret.yaml catalog-api-secret.yaml payments-api-secret.yaml; do
+  if [[ -f "$SCRIPT_DIR/$secret_file" ]]; then
+    kubectl apply -f "$SCRIPT_DIR/$secret_file"
+  else
+    log_error "$secret_file não encontrado — copie o .example e preencha os valores: cp $SCRIPT_DIR/$secret_file.example $SCRIPT_DIR/$secret_file"
+  fi
+done
+log_success "Secrets das APIs aplicados"
+
 if [ -n "$SQS_USER_CREATED_QUEUE_URL" ]; then
   log_info "Injetando SQS URL no users-api..."
   kubectl create secret generic users-api-sqs \

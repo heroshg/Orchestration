@@ -85,6 +85,9 @@ spec:
                 name: payments-api-config
             - secretRef:
                 name: payments-api-secret
+            - secretRef:
+                name: payments-api-sqs
+                optional: true
           env:
             - name: DD_AGENT_HOST
               valueFrom:

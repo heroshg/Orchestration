@@ -86,6 +86,9 @@ spec:
                 name: users-api-config
             - secretRef:
                 name: users-api-secret
+            - secretRef:
+                name: users-api-sqs
+                optional: true
           env:
             # IP do node atual — usado como endpoint do Datadog Agent (DaemonSet)
             - name: DD_AGENT_HOST

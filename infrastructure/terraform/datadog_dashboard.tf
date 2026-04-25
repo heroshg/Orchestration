@@ -516,6 +516,258 @@ resource "datadog_dashboard" "fcg_observability" {
     }
   }
 
+  # ──────────────────────────────────────────────────────────────────────────
+  # SQS — DLQs e Throughput de Filas
+  # ──────────────────────────────────────────────────────────────────────────
+
+  widget {
+    note_definition {
+      content          = "## Filas SQS — DLQs e Throughput\nMensagens paradas nas dead letter queues e fluxo de entrada/saída das filas principais"
+      background_color = "red"
+      font_size        = "14"
+      text_align       = "left"
+      show_tick        = false
+      tick_edge        = "left"
+    }
+    widget_layout {
+      x      = 0
+      y      = 19
+      width  = 12
+      height = 1
+    }
+  }
+
+  widget {
+    timeseries_definition {
+      title         = "DLQ — Mensagens Paradas (visíveis)"
+      show_legend   = true
+      legend_layout = "horizontal"
+
+      request {
+        q            = "avg:aws.sqs.approximate_number_of_messages_visible{queuename:fcg-production-user-created-events-dlq}"
+        display_type = "bars"
+        style {
+          palette    = "red"
+          line_type  = "solid"
+          line_width = "normal"
+        }
+        metadata {
+          expression = "avg:aws.sqs.approximate_number_of_messages_visible{queuename:fcg-production-user-created-events-dlq}"
+          alias_name = "DLQ UserCreated"
+        }
+      }
+
+      request {
+        q            = "avg:aws.sqs.approximate_number_of_messages_visible{queuename:fcg-production-payment-processed-events-dlq}"
+        display_type = "bars"
+        style {
+          palette    = "orange"
+          line_type  = "solid"
+          line_width = "normal"
+        }
+        metadata {
+          expression = "avg:aws.sqs.approximate_number_of_messages_visible{queuename:fcg-production-payment-processed-events-dlq}"
+          alias_name = "DLQ PaymentProcessed"
+        }
+      }
+
+      yaxis {
+        include_zero = true
+        min          = "0"
+      }
+
+      marker {
+        value        = "y > 0"
+        display_type = "error dashed"
+        label        = "⚠ mensagens na DLQ"
+      }
+    }
+    widget_layout {
+      x      = 0
+      y      = 20
+      width  = 6
+      height = 3
+    }
+  }
+
+  widget {
+    timeseries_definition {
+      title         = "Filas Principais — Throughput (msg/min)"
+      show_legend   = true
+      legend_layout = "horizontal"
+
+      request {
+        q            = "sum:aws.sqs.number_of_messages_sent{queuename:fcg-production-user-created-events}.as_rate()*60"
+        display_type = "line"
+        style {
+          palette    = "blue"
+          line_type  = "solid"
+          line_width = "normal"
+        }
+        metadata {
+          expression = "sum:aws.sqs.number_of_messages_sent{queuename:fcg-production-user-created-events}.as_rate()*60"
+          alias_name = "UserCreated — entrada"
+        }
+      }
+
+      request {
+        q            = "sum:aws.sqs.number_of_messages_deleted{queuename:fcg-production-user-created-events}.as_rate()*60"
+        display_type = "line"
+        style {
+          palette    = "blue"
+          line_type  = "dashed"
+          line_width = "normal"
+        }
+        metadata {
+          expression = "sum:aws.sqs.number_of_messages_deleted{queuename:fcg-production-user-created-events}.as_rate()*60"
+          alias_name = "UserCreated — consumidas"
+        }
+      }
+
+      request {
+        q            = "sum:aws.sqs.number_of_messages_sent{queuename:fcg-production-payment-processed-events}.as_rate()*60"
+        display_type = "line"
+        style {
+          palette    = "green"
+          line_type  = "solid"
+          line_width = "normal"
+        }
+        metadata {
+          expression = "sum:aws.sqs.number_of_messages_sent{queuename:fcg-production-payment-processed-events}.as_rate()*60"
+          alias_name = "PaymentProcessed — entrada"
+        }
+      }
+
+      request {
+        q            = "sum:aws.sqs.number_of_messages_deleted{queuename:fcg-production-payment-processed-events}.as_rate()*60"
+        display_type = "line"
+        style {
+          palette    = "green"
+          line_type  = "dashed"
+          line_width = "normal"
+        }
+        metadata {
+          expression = "sum:aws.sqs.number_of_messages_deleted{queuename:fcg-production-payment-processed-events}.as_rate()*60"
+          alias_name = "PaymentProcessed — consumidas"
+        }
+      }
+
+      yaxis {
+        include_zero = true
+      }
+    }
+    widget_layout {
+      x      = 6
+      y      = 20
+      width  = 6
+      height = 3
+    }
+  }
+
+  widget {
+    timeseries_definition {
+      title         = "DLQ — Idade da Mensagem Mais Antiga (segundos)"
+      show_legend   = true
+      legend_layout = "horizontal"
+
+      request {
+        q            = "max:aws.sqs.approximate_age_of_oldest_message{queuename:fcg-production-user-created-events-dlq}"
+        display_type = "line"
+        style {
+          palette    = "red"
+          line_type  = "solid"
+          line_width = "thick"
+        }
+        metadata {
+          expression = "max:aws.sqs.approximate_age_of_oldest_message{queuename:fcg-production-user-created-events-dlq}"
+          alias_name = "DLQ UserCreated"
+        }
+      }
+
+      request {
+        q            = "max:aws.sqs.approximate_age_of_oldest_message{queuename:fcg-production-payment-processed-events-dlq}"
+        display_type = "line"
+        style {
+          palette    = "orange"
+          line_type  = "solid"
+          line_width = "thick"
+        }
+        metadata {
+          expression = "max:aws.sqs.approximate_age_of_oldest_message{queuename:fcg-production-payment-processed-events-dlq}"
+          alias_name = "DLQ PaymentProcessed"
+        }
+      }
+
+      marker {
+        value        = "y = 1800"
+        display_type = "warning dashed"
+        label        = "30 min"
+      }
+
+      marker {
+        value        = "y = 3600"
+        display_type = "error dashed"
+        label        = "1 hora"
+      }
+
+      yaxis {
+        include_zero = true
+      }
+    }
+    widget_layout {
+      x      = 0
+      y      = 23
+      width  = 6
+      height = 3
+    }
+  }
+
+  widget {
+    timeseries_definition {
+      title         = "Filas Principais — Mensagens em Processamento (in-flight)"
+      show_legend   = true
+      legend_layout = "horizontal"
+
+      request {
+        q            = "avg:aws.sqs.approximate_number_of_messages_not_visible{queuename:fcg-production-user-created-events}"
+        display_type = "area"
+        style {
+          palette    = "blue"
+          line_type  = "solid"
+          line_width = "normal"
+        }
+        metadata {
+          expression = "avg:aws.sqs.approximate_number_of_messages_not_visible{queuename:fcg-production-user-created-events}"
+          alias_name = "UserCreated in-flight"
+        }
+      }
+
+      request {
+        q            = "avg:aws.sqs.approximate_number_of_messages_not_visible{queuename:fcg-production-payment-processed-events}"
+        display_type = "area"
+        style {
+          palette    = "green"
+          line_type  = "solid"
+          line_width = "normal"
+        }
+        metadata {
+          expression = "avg:aws.sqs.approximate_number_of_messages_not_visible{queuename:fcg-production-payment-processed-events}"
+          alias_name = "PaymentProcessed in-flight"
+        }
+      }
+
+      yaxis {
+        include_zero = true
+      }
+    }
+    widget_layout {
+      x      = 6
+      y      = 23
+      width  = 6
+      height = 3
+    }
+  }
+
 }
 
 output "datadog_dashboard_url" {

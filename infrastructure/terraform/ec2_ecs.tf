@@ -23,6 +23,28 @@ resource "aws_iam_role_policy_attachment" "ecs_instance" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role"
 }
 
+resource "aws_iam_role_policy_attachment" "ecs_ssm" {
+  role       = aws_iam_role.ecs_instance.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_role_policy" "ecs_sqs_publish" {
+  name = "SQSPublishPolicy"
+  role = aws_iam_role.ecs_instance.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["sqs:SendMessage"]
+      Resource = [
+        aws_sqs_queue.user_created.arn,
+        aws_sqs_queue.payment_processed.arn,
+      ]
+    }]
+  })
+}
+
 resource "aws_iam_instance_profile" "ecs" {
   name = "${local.name_prefix}-ecs-instance-profile"
   role = aws_iam_role.ecs_instance.name
@@ -65,7 +87,7 @@ resource "aws_security_group" "ecs_instance" {
 
 resource "aws_instance" "ecs" {
   ami                    = "ami-0ce09e2429ff33e52"
-  instance_type          = "t2.micro"
+  instance_type          = "t2.small"
   iam_instance_profile   = aws_iam_instance_profile.ecs.name
   vpc_security_group_ids = [aws_security_group.ecs_instance.id]
 
