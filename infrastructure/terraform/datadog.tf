@@ -1,3 +1,23 @@
+# ── Datadog AWS Integration ───────────────────────────────────────────────────
+# Liga o Datadog à conta AWS via IAM role para puxar métricas do CloudWatch.
+# Sem este recurso, o IAM role existe mas o Datadog não sabe que deve usá-lo.
+
+resource "datadog_integration_aws" "fcg" {
+  account_id = data.aws_caller_identity.current.account_id
+  role_name  = aws_iam_role.datadog_aws.name
+
+  # Sem filter_tags → coleta métricas de todos os recursos da conta
+  # Namespaces habilitados por padrão incluem SQS, Lambda, ECS, API Gateway
+  account_specific_namespace_rules = {
+    sqs             = true
+    lambda          = true
+    ecs             = true
+    api_gateway     = true
+    application_elb = false
+    dynamodb        = true
+  }
+}
+
 # ── AWS Integration IAM Role ──────────────────────────────────────────────────
 # Permite ao Datadog ler métricas do CloudWatch para todos os serviços AWS
 
