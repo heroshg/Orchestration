@@ -59,34 +59,83 @@ resource "aws_apigatewayv2_integration" "catalog_api_base" {
   payload_format_version = "1.0"
 }
 
-# Rotas exatas para endpoints base
+# ─── JWT Authorizer ──────────────────────────────────────────────────────────
+# Valida tokens emitidos pela UsersAPI (RS256). API Gateway busca a chave
+# pública via JWKS endpoint exposto pela própria UsersAPI em
+# /.well-known/jwks.json. Os tokens devem ter:
+#   iss = var.jwt_issuer    (claim "iss")
+#   aud = var.jwt_audience  (claim "aud")
+#   alg = RS256             (assinatura RSA com a chave pública do JWKS)
+resource "aws_apigatewayv2_authorizer" "jwt" {
+  api_id           = aws_apigatewayv2_api.fcg.id
+  authorizer_type  = "JWT"
+  identity_sources = ["$request.header.Authorization"]
+  name             = "fcg-jwt-authorizer-${var.environment}"
+
+  jwt_configuration {
+    audience = [var.jwt_audience]
+    issuer   = "http://${aws_eip.ecs.public_ip}:8080"
+  }
+}
+
+# ─── Rotas públicas (sem authorizer) ─────────────────────────────────────────
+# Cadastro de novo usuário e login não exigem JWT (não tem token ainda).
 resource "aws_apigatewayv2_route" "create_user" {
   api_id    = aws_apigatewayv2_api.fcg.id
   route_key = "POST /api/users"
   target    = "integrations/${aws_apigatewayv2_integration.users_api_base.id}"
 }
 
-resource "aws_apigatewayv2_route" "get_games" {
+resource "aws_apigatewayv2_route" "users_login" {
   api_id    = aws_apigatewayv2_api.fcg.id
-  route_key = "GET /api/games"
-  target    = "integrations/${aws_apigatewayv2_integration.catalog_api_base.id}"
-}
-
-resource "aws_apigatewayv2_route" "create_game" {
-  api_id    = aws_apigatewayv2_api.fcg.id
-  route_key = "POST /api/games"
-  target    = "integrations/${aws_apigatewayv2_integration.catalog_api_base.id}"
-}
-
-# Rotas proxy para demais endpoints (login, getById, purchase, library, etc.)
-resource "aws_apigatewayv2_route" "users_proxy" {
-  api_id    = aws_apigatewayv2_api.fcg.id
-  route_key = "ANY /api/users/{proxy+}"
+  route_key = "POST /api/users/login"
   target    = "integrations/${aws_apigatewayv2_integration.users_api.id}"
 }
 
-resource "aws_apigatewayv2_route" "catalog_proxy" {
+# JWKS e OIDC discovery — públicos por design (necessários para validação)
+resource "aws_apigatewayv2_route" "well_known" {
   api_id    = aws_apigatewayv2_api.fcg.id
-  route_key = "ANY /api/games/{proxy+}"
-  target    = "integrations/${aws_apigatewayv2_integration.catalog_api.id}"
+  route_key = "GET /.well-known/{proxy+}"
+  target    = "integrations/${aws_apigatewayv2_integration.users_api_wellknown.id}"
+}
+
+resource "aws_apigatewayv2_integration" "users_api_wellknown" {
+  api_id                 = aws_apigatewayv2_api.fcg.id
+  integration_type       = "HTTP_PROXY"
+  integration_method     = "ANY"
+  integration_uri        = "http://${aws_eip.ecs.public_ip}:8080/.well-known/{proxy}"
+  payload_format_version = "1.0"
+}
+
+# ─── Rotas protegidas (exigem JWT válido) ────────────────────────────────────
+resource "aws_apigatewayv2_route" "get_games" {
+  api_id             = aws_apigatewayv2_api.fcg.id
+  route_key          = "GET /api/games"
+  target             = "integrations/${aws_apigatewayv2_integration.catalog_api_base.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
+resource "aws_apigatewayv2_route" "create_game" {
+  api_id             = aws_apigatewayv2_api.fcg.id
+  route_key          = "POST /api/games"
+  target             = "integrations/${aws_apigatewayv2_integration.catalog_api_base.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
+resource "aws_apigatewayv2_route" "users_proxy" {
+  api_id             = aws_apigatewayv2_api.fcg.id
+  route_key          = "ANY /api/users/{proxy+}"
+  target             = "integrations/${aws_apigatewayv2_integration.users_api.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
+resource "aws_apigatewayv2_route" "catalog_proxy" {
+  api_id             = aws_apigatewayv2_api.fcg.id
+  route_key          = "ANY /api/games/{proxy+}"
+  target             = "integrations/${aws_apigatewayv2_integration.catalog_api.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
 }

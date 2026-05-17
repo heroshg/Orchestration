@@ -1,10 +1,13 @@
 environment          = "production"
 aws_region           = "us-east-1"
 
-# ─── JWT (gere cada uma com: openssl rand -base64 32) ─────────────────────────
-jwt_key_users    = "CHANGE_ME"
-jwt_key_catalog  = "CHANGE_ME"
-jwt_key_payments = "CHANGE_ME"
+# ─── JWT (RSA — gere com: bash infrastructure/scripts/generate-jwt-keys.sh) ──
+# As três APIs compartilham a mesma chave pública para validar.
+# Apenas a UsersAPI tem acesso à chave privada (assina os tokens).
+jwt_rsa_private_key = "CHANGE_ME_base64_pem"
+jwt_rsa_public_key  = "CHANGE_ME_base64_pem"
+jwt_issuer          = "FiapCloudGames"
+jwt_audience        = "FiapCloudGames"
 
 # ─── Banco de dados ───────────────────────────────────────────────────────────
 db_password  = "CHANGE_ME"

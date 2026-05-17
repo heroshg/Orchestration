@@ -1,0 +1,57 @@
+# =============================================================================
+# Swagger UI agregador — carrega o spec OpenAPI curado servido pelo Nginx em
+# /swagger/openapi.yaml. Acessível via api-gateway em /swagger.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: swagger-ui
+  namespace: fcg
+  labels:
+    app: swagger-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: swagger-ui
+  template:
+    metadata:
+      labels:
+        app: swagger-ui
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: swagger-ui
+          image: swaggerapi/swagger-ui:v5.17.14
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: BASE_URL
+              value: /swagger
+            - name: URL
+              value: /swagger/openapi.yaml
+            - name: LAYOUT
+              value: BaseLayout
+            - name: DEEP_LINKING
+              value: "true"
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "100m"
+            limits:
+              memory: "128Mi"
+              cpu: "250m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: swagger-ui
+  namespace: fcg
+spec:
+  selector:
+    app: swagger-ui
+  ports:
+    - port: 8080
+      targetPort: 8080
+  type: ClusterIP

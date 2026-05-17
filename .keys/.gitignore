@@ -1,0 +1,3 @@
+# Chaves RSA — NUNCA committar
+*.pem
+*.key

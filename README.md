@@ -1,6 +1,6 @@
 # FiapCloudGames — Orquestração
 
-Repositório central de orquestração da plataforma **FiapCloudGames**: Docker Compose para desenvolvimento local, manifests Kubernetes para produção e infraestrutura AWS como código (SAM).
+Repositório central de orquestração da plataforma **FiapCloudGames**: Docker Compose para desenvolvimento local, manifests Kubernetes (Kustomize) para dev/prod e infraestrutura AWS como código (Terraform).
 
 ---
 
@@ -12,7 +12,7 @@ Repositório central de orquestração da plataforma **FiapCloudGames**: Docker 
 - [Fluxos de Eventos](#fluxos-de-eventos)
 - [Executando com Docker Compose](#executando-com-docker-compose)
 - [Deploy no Kubernetes](#deploy-no-kubernetes)
-- [Deploy AWS (SAM)](#deploy-aws-sam)
+- [Deploy AWS (Terraform)](#deploy-aws-terraform)
 - [Observabilidade — Datadog APM](#observabilidade--datadog-apm)
 - [Repositórios dos Microsserviços](#repositórios-dos-microsserviços)
 
@@ -33,7 +33,7 @@ Repositório central de orquestração da plataforma **FiapCloudGames**: Docker 
 ```
                     ┌─────────────────────────────────┐
                     │       AWS API Gateway            │
-                    │   (JWT Authorizer + Roteamento)  │
+                    │   (CORS + Throttling + Rotas)    │
                     └────────────┬────────────┬────────┘
                                  │            │
               ┌──────────────────▼──┐    ┌────▼─────────────────┐
@@ -86,15 +86,18 @@ Repositório central de orquestração da plataforma **FiapCloudGames**: Docker 
 ## Stack de Tecnologias
 
 ### API Gateway
-- **AWS API Gateway (HTTP API v2)** — ponto de entrada único, JWT Authorizer nativo, roteamento para UsersAPI e CatalogAPI
-- Configuração: `infrastructure/sam/template.yaml`
+- **AWS API Gateway (HTTP API v2)** — ponto de entrada único com roteamento, CORS, throttling e **JWT Authorizer nativo** (RS256) para UsersAPI e CatalogAPI
+- Tokens são assinados em RSA pela UsersAPI; o gateway busca a chave pública via JWKS endpoint (`/.well-known/jwks.json`)
+- Rotas públicas (sem JWT): `POST /api/users` (cadastro), `POST /api/users/login`, `GET /.well-known/*`
+- Em desenvolvimento, o gateway é representado por um proxy reverso Nginx (`infrastructure/nginx/nginx.conf`) que reproduz rotas, CORS e throttling. A validação JWT em dev acontece nas próprias APIs
+- Configuração de produção: `infrastructure/terraform/api_gateway.tf`
 
 ### Serverless — NotificationsAPI
 - **AWS Lambda** (.NET 8, arm64) — substitui o container que rodava continuamente
 - **Trigger**: Amazon SQS (EventSourceMapping direto, sem polling manual)
 - **Persistência**: Amazon DynamoDB (persistência poliglota — NoSQL)
-- Código: repositório [NotificationsAPI](https://github.com/heroshg/NotificationsAPI)
-- IaC: `infrastructure/sam/template.yaml`
+- Código: pasta `NotificationsLambda/` neste repositório
+- IaC: `infrastructure/terraform/lambda.tf`
 
 ### Mensageria
 | Ambiente | Broker |
@@ -119,8 +122,8 @@ Repositório central de orquestração da plataforma **FiapCloudGames**: Docker 
 - **Datadog Agent 7.58** — DaemonSet no K8s que coleta traces (APM), métricas e logs de todos os containers
 - **Datadog .NET Tracer** (`Datadog.Trace.Bundle` NuGet) — auto-instrumentation de ASP.NET Core, EF Core, Npgsql, StackExchange.Redis, MassTransit/RabbitMQ, HttpClient, sem mudança de código
 - **Datadog Lambda Extension** — layer pública (`Datadog-Extension-ARM`) anexada à Lambda de Notificações para forwarding de traces, logs e métricas diretamente da AWS
-- **API Key** gerenciada via Kubernetes Secret (`datadog-secret`) e AWS SAM Parameter (`NoEcho`)
-- Deploy K8s: manifest único em `k8s/datadog-agent.yaml`
+- **API Key** gerenciada via Kubernetes Secret (`datadog-secret`) e variável sensível do Terraform (`dd_api_key`)
+- Deploy K8s: `k8s/base/datadog-agent.yaml` (DaemonSet + ServiceAccount/RBAC + ConfigMap)
 - Cobertura dos 3 pilares: métricas (APM + runtime metrics), logs (`DD_LOGS_INJECTION=true` correlaciona trace_id/span_id), traces distribuídos (incluindo o fluxo "Compra de Jogo": API Gateway → CatalogAPI → RabbitMQ → PaymentsAPI → SQS → Lambda → DynamoDB)
 
 ---
@@ -164,8 +167,8 @@ sequenceDiagram
     participant L as Lambda (Notifications)
     participant DDB as DynamoDB
 
-    Cliente->>GW: POST /api/games/purchase (JWT)
-    GW->>CA: proxy (JWT validado pelo GW)
+    Cliente->>GW: POST /api/games/purchase (Bearer JWT)
+    GW->>CA: proxy (JWT validado pelo middleware [Authorize] da CatalogAPI)
     CA->>DB2: valida jogo + licença
     CA->>RMQ: publica OrderPlacedEvent
     CA-->>GW: 202 Accepted
@@ -190,9 +193,26 @@ sequenceDiagram
 ### Iniciar todos os serviços
 
 ```bash
-cp .env.example .env   # edite as variáveis (inclui DD_API_KEY)
+cp .env.example .env   # edite as variáveis (inclui DD_API_KEY e DD_SITE)
+
+# Gere o par de chaves RSA (assinatura de JWTs) — segue o output do script
+# adicionando JWT_RSA_PRIVATE_KEY e JWT_RSA_PUBLIC_KEY ao seu .env
+bash infrastructure/scripts/generate-jwt-keys.sh
+
+# Empacote a NotificationsLambda — necessário para o fluxo SQS → Lambda → DynamoDB
+bash infrastructure/localstack/build-lambda.sh
+# Windows: pwsh infrastructure/localstack/build-lambda.ps1
+
 docker compose up --build
 ```
+
+> **AWS local com LocalStack**: o `docker-compose.yml` sobe um container
+> `localstack` que emula SQS, DynamoDB, Lambda, S3 e CloudWatch Logs. O script
+> `infrastructure/localstack/init-aws.sh` cria automaticamente filas + DLQs
+> (`fcg-local-user-created-events`, `fcg-local-payment-processed-events`),
+> a tabela DynamoDB `fcg-local-notifications`, o bucket de deploy e a função
+> Lambda com event source mappings nas duas filas — reproduzindo o fluxo de
+> produção sem custo em nuvem.
 
 > **Datadog local**: o `datadog-agent` só sobe corretamente com uma `DD_API_KEY` válida.
 > Se quiser rodar sem Datadog, comente o serviço `datadog-agent` no `docker-compose.yml`
@@ -210,135 +230,321 @@ docker compose up --build
 | users-postgres | localhost:5432 |
 | catalog-postgres | localhost:5433 |
 | payments-postgres | localhost:5434 |
+| LocalStack (edge) | http://localhost:4566 |
+| **API Gateway (Nginx)** | **http://localhost:8080** — entrypoint único |
 
-> **NotificationsAPI não está no Docker Compose** — foi migrada para AWS Lambda.
-> Para testar localmente: `sam local invoke` no repositório NotificationsAPI.
+> **NotificationsAPI** — em produção roda como AWS Lambda gerenciada (provisionada
+> pelo Terraform). Em desenvolvimento (Compose), o LocalStack hospeda a mesma
+> função `.NET 8` lida do `.zip` gerado por
+> `infrastructure/localstack/build-lambda.sh`, com event source mappings reais
+> nas filas SQS — fluxo end-to-end sem dependência de cloud.
+
+### Acesso às APIs em dev
+
+Em produção o entrypoint é o **AWS API Gateway HTTP API v2** provisionado
+pelo Terraform. Como HTTP API v2 não é emulado no LocalStack Community
+(é Pro), em dev usamos **Nginx** como proxy reverso reproduzindo as
+mesmas rotas, CORS e throttling do gateway real. O entrypoint local é:
+
+```
+http://localhost:8080
+```
+
+```bash
+# Cadastro de usuário (mesmo path do gateway de produção)
+curl -X POST http://localhost:8080/api/users \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Demo","email":"demo@fgc.com","password":"Demo@123"}'
+
+# Catálogo de jogos
+curl http://localhost:8080/api/games
+
+# Health do gateway
+curl http://localhost:8080/health
+```
+
+Acessar as portas individuais (`5001`/`5002`/`5003`) continua funcionando
+para debug pontual, mas o caminho recomendado é via `8080` — que é o
+mesmo padrão de produção (uma URL, vários microsserviços abstraídos).
+
+### Inspecionar recursos AWS locais
+
+```bash
+# Listar filas
+docker exec fcg-localstack awslocal sqs list-queues
+
+# Espiar mensagens na fila de cadastro
+docker exec fcg-localstack awslocal sqs receive-message \
+  --queue-url http://localhost:4566/000000000000/fcg-local-user-created-events
+
+# Ler notificações persistidas
+docker exec fcg-localstack awslocal dynamodb scan \
+  --table-name fcg-local-notifications
+
+# Bucket de deploy da Lambda
+docker exec fcg-localstack awslocal s3 ls s3://fcg-local-lambda-deploy
+
+# Logs da Lambda
+docker exec fcg-localstack awslocal logs describe-log-groups
+docker exec fcg-localstack awslocal logs filter-log-events \
+  --log-group-name /aws/lambda/fcg-local-notifications \
+  --limit 50 --query 'events[].message' --output text
+```
+
+### Cobertura AWS ↔ LocalStack
+
+| Recurso AWS (Terraform) | Em LocalStack? | Substituto local |
+|---|---|---|
+| `aws_sqs_queue` (filas + DLQs) | ✅ emulado |  |
+| `aws_dynamodb_table` | ✅ emulado |  |
+| `aws_lambda_function` | ✅ Compose (LocalStack) · AWS gerenciado em produção | — |
+| `aws_lambda_event_source_mapping` | ✅ Compose (LocalStack) · AWS gerenciado em produção | — |
+| `aws_apigatewayv2_api` + rotas | ⚠️ **LocalStack Pro only** (HTTP API v2) | **Nginx** em `http://localhost:8080` reproduzindo as mesmas rotas, CORS e throttling — `infrastructure/nginx/nginx.conf` |
+| `aws_s3_bucket` (lambda deploy) | ✅ emulado |  |
+| `aws_cloudwatch_log_group` | ✅ emulado |  |
+| `aws_iam_role` / policy | ✅ aceito (não enforced em local) |  |
+| `aws_ecs_cluster` / `aws_ecs_service` | ❌ requer LocalStack Pro | Containers do Compose / Pods do K8s |
+| `aws_instance` (EC2) | ❌ não emulável de forma útil | Containers / Pods |
+| `aws_ebs_volume` / `aws_eip` / `aws_security_group` | ❌ irrelevante em local | Volumes Docker / networking nativo |
+| `aws_ecr_repository` | ❌ desnecessário | `docker build` direto na imagem `:latest` |
+
+A coluna **"Substituto local"** mostra como o item é coberto sem AWS: as APIs que rodariam em ECS/EC2 viram containers no Compose ou pods no K8s, mantendo o mesmo comportamento de aplicação (porque a imagem do app é a mesma — só o orquestrador muda).
+
+### Autenticação JWT (RSA RS256)
+
+A UsersAPI emite tokens JWT assinados com **RSA** (algoritmo `RS256`),
+permitindo que o **AWS API Gateway HTTP API v2 JWT Authorizer nativo** valide
+os tokens em produção sem precisar de Lambda authorizer. A chave pública é
+publicada pela UsersAPI no endpoint padrão OIDC.
+
+| Endpoint | Função |
+|---|---|
+| `/.well-known/jwks.json` | Chave pública em formato JWK (`kid: fcg-rsa-1`) |
+| `/.well-known/openid-configuration` | Metadata OIDC (issuer + jwks_uri + algs) |
+
+**Gerar as chaves localmente** (antes da primeira subida do Compose ou Terraform):
+
+```bash
+bash infrastructure/scripts/generate-jwt-keys.sh
+```
+
+O script gera o par em `.keys/private.pem` + `.keys/public.pem` (gitignored)
+e imprime as variáveis prontas para o `.env`:
+```
+JWT_RSA_PRIVATE_KEY=<base64 do PEM da chave privada>
+JWT_RSA_PUBLIC_KEY=<base64 do PEM da chave pública>
+```
+
+**Distribuição de chaves** por ambiente:
+
+| Serviço | Chave privada | Chave pública |
+|---|---|---|
+| UsersAPI | ✅ (para assinar tokens + servir o JWKS) | ✅ |
+| CatalogAPI | — | ✅ (validar tokens) |
+| PaymentsAPI | — | ✅ (validar tokens) |
+| AWS API Gateway | — | Busca via JWKS endpoint dinamicamente |
+
+> O AWS API Gateway só suporta JWT Authorizer com algoritmos RSA/ECDSA
+> (HMAC `HS256` não é aceito). Por isso a escolha por RSA.
 
 ### Credenciais de teste (seed automático)
+
+Na primeira subida, a UsersAPI cria automaticamente o usuário admin via
+`UsersDbSeeder` (Clean Architecture — `Users.Infrastructure/Persistence/Seed/`).
+A criação é idempotente.
 
 | E-mail | Senha | Role |
 |--------|-------|------|
 | `admin@fgc.com` | `Admin@123` | Admin |
-| `testplayer@fgc.com` | `Test@123` | User |
+
+Outros usuários podem ser cadastrados via `POST /api/users`.
 
 ---
 
 ## Deploy no Kubernetes
 
-### Pré-requisitos
-- `kubectl` + cluster (Docker Desktop / Minikube / Kind / EKS)
+Os manifests são gerenciados via **Kustomize** (nativo no `kubectl`):
+um único `k8s/base/` é compartilhado entre ambientes, e cada `overlay`
+injeta o que é específico do ambiente (LocalStack em dev, URLs reais
+do Terraform em prod).
 
-### 1. Build das imagens
+### Estrutura
+
+```
+k8s/
+├── base/                              # Manifests comuns (todos os ambientes)
+│   ├── kustomization.yaml             # Lista resources + configMapGenerator
+│   ├── namespace.yaml
+│   ├── network-policies.yaml
+│   ├── users-postgres.yaml + secret
+│   ├── catalog-postgres.yaml
+│   ├── payments-postgres.yaml
+│   ├── postgres-secrets.yaml
+│   ├── rabbitmq.yaml + secret
+│   ├── redis.yaml + secret
+│   ├── users-api.yaml + secret       # Service em :8080
+│   ├── catalog-api.yaml + secret
+│   ├── payments-api.yaml + secret
+│   ├── api-gateway.yaml              # Nginx — entrypoint único em :8080
+│   ├── swagger-ui.yaml               # Swagger UI carregando spec curado
+│   ├── ingress.yaml
+│   ├── datadog-agent.yaml + secret   # DaemonSet + RBAC + checks customizados
+│   └── bootstrap.sh / kind-config.yaml
+└── overlays/
+    ├── local/                         # Cluster local (Docker Desktop / kind / minikube)
+    │   ├── kustomization.yaml
+    │   ├── localstack.yaml           # LocalStack (SQS + DynamoDB + S3 + Logs)
+    │   └── sqs-secrets.yaml          # Endpoints AWS apontam para o LocalStack do cluster
+    └── prod/                          # EKS (recursos reais via Terraform)
+        ├── kustomization.yaml
+        └── sqs-secrets.yaml.example  # Template com placeholders dos outputs Terraform
+```
+
+ConfigMaps de `nginx-config` (nginx.conf + openapi.yaml) e `datadog-checks`
+(redisdb.yaml + disk.yaml) são gerados pelo `configMapGenerator` do
+`base/kustomization.yaml` reaproveitando os arquivos em `infrastructure/`
+— mesma fonte da verdade do Compose, zero duplicação.
+
+### Deploy em cluster local (com LocalStack)
 
 ```bash
+# 1. Imagens dos serviços + imagem do LocalStack
+docker build -t fcg-localstack:local infrastructure/localstack/
 docker build -t users-api:latest    ../UsersAPI
 docker build -t catalog-api:latest  ../CatalogAPI
 docker build -t payments-api:latest ../PaymentsAPI
+
+# 2. Secrets de aplicação (copie cada *-secret.yaml.example pra *-secret.yaml
+#    e preencha os valores)
+
+# 3. Deploy — a flag --load-restrictor permite o configMapGenerator do base
+#    ler nginx.conf/openapi.yaml/datadog-checks de infrastructure/ (DRY)
+kubectl apply -k k8s/overlays/local --load-restrictor=LoadRestrictionsNone
+
+# 4. Acesso via API Gateway (entrypoint único, espelha produção)
+kubectl port-forward svc/api-gateway 8080:8080 -n fcg
+#   → http://localhost:8080/swagger       (Swagger UI agregado)
+#   → http://localhost:8080/api/users     (UsersAPI por trás do gateway)
+#   → http://localhost:8080/api/games     (CatalogAPI por trás do gateway)
+
+# Acesso direto às APIs (debug)
+kubectl port-forward svc/users-api   5001:8080 -n fcg
+kubectl port-forward svc/catalog-api 5002:8080 -n fcg
+kubectl port-forward svc/localstack  4566:4566 -n fcg   # awslocal a partir do host
 ```
 
-### 2. Aplicar manifests
+> **Lambda em Kubernetes**: a função `NotificationsFunction` é serverless e
+> vive **fora do cluster**, provisionada na AWS via Terraform. O Kubernetes
+> orquestra apenas os microsserviços containerizados (UsersAPI, CatalogAPI,
+> PaymentsAPI); o fluxo SQS → Lambda → DynamoDB roda no plano gerenciado da
+> AWS, conforme a arquitetura de produção. Para validação funcional da
+> Lambda em desenvolvimento, utilize o ambiente Docker Compose, que emula
+> SQS, DynamoDB e Lambda localmente com LocalStack.
+
+### Deploy em EKS (produção)
 
 ```bash
-kubectl apply -f k8s/namespace.yaml
-kubectl apply -f k8s/ -n fcg
+# 1. Provisionar a infra AWS (SQS, DynamoDB, Lambda, ECR, etc.)
+cd infrastructure/terraform && bash deploy.sh && cd -
+
+# 2. Popular o Secret com queue URLs reais
+cp k8s/overlays/prod/sqs-secrets.yaml.example k8s/overlays/prod/sqs-secrets.yaml
+#   Edite e substitua os REPLACE_WITH_TERRAFORM_OUTPUT pelos valores de:
+#     terraform -chdir=infrastructure/terraform output
+
+# 3. Deploy do overlay prod
+kubectl apply -k k8s/overlays/prod --load-restrictor=LoadRestrictionsNone
 ```
 
-### 3. Verificar pods
+> **Por que duas pastas?** A imagem dos serviços é a mesma em dev e prod —
+> só as env vars de AWS (queue URLs e endpoint) mudam. Os Deployments já
+> declaram `envFrom: secretRef: name: *-sqs (optional: true)` para esses
+> valores; cada overlay popula esses Secrets de jeitos diferentes.
+
+### Verificar pods
 
 ```bash
 kubectl get pods     -n fcg
 kubectl get services -n fcg
-```
-
-### 4. Port-forward (acesso local)
-
-```bash
-kubectl port-forward svc/users-api   5001:80   -n fcg
-kubectl port-forward svc/catalog-api 5002:80   -n fcg
-kubectl port-forward svc/rabbitmq    15672:15672 -n fcg
 # Dashboards de observabilidade ficam em https://app.datadoghq.com/
-```
-
-### Estrutura dos manifests K8s
-
-```
-k8s/
-├── namespace.yaml              # namespace: fcg
-├── rabbitmq.yaml               # Broker (desenvolvimento local em K8s)
-├── redis.yaml                  # Cache distribuído
-├── datadog-agent.yaml          # Observabilidade — APM + Logs + Metrics (DaemonSet)
-├── users-postgres.yaml
-├── catalog-postgres.yaml
-├── payments-postgres.yaml
-├── users-api.yaml
-├── catalog-api.yaml
-├── payments-api.yaml
-└── network-policies.yaml       # Isolamento de rede por serviço
 ```
 
 ---
 
-## Deploy AWS (SAM)
+## Deploy AWS (Terraform)
 
-A infraestrutura AWS é gerenciada via **AWS SAM** (`infrastructure/sam/template.yaml`).
+A infraestrutura AWS é gerenciada via **Terraform** em `infrastructure/terraform/`.
+A stack está modularizada por recurso: `api_gateway.tf`, `lambda.tf`, `sqs.tf`,
+`dynamodb.tf`, `ecs_tasks.tf`, `iam.tf`, `datadog.tf`, etc.
 
 ### O que é provisionado
 
-| Recurso | Descrição |
-|---------|-----------|
-| `AWS::ApiGatewayV2::Api` | API Gateway HTTP com JWT Authorizer |
-| `AWS::SQS::Queue` | Fila `fcg-user-created-events-production` |
-| `AWS::SQS::Queue` | Fila `fcg-payment-processed-events-production` |
-| `AWS::SQS::Queue` | DLQs para cada fila (retenção 14 dias) |
-| `AWS::Serverless::Function` | Lambda `fcg-notifications-production` |
-| `AWS::DynamoDB::Table` | `fcg-notifications-production` (NoSQL) |
-| `AWS::IAM::Role` | Role com políticas mínimas (least privilege) |
-| `AWS::Logs::LogGroup` | Logs da Lambda (retenção 14 dias) |
+| Recurso Terraform | Descrição |
+|-------------------|-----------|
+| `aws_apigatewayv2_api` + integrations + routes | API Gateway HTTP API v2 com CORS, throttling e roteamento HTTP_PROXY |
+| `aws_sqs_queue` | Filas `fcg-{env}-user-created-events` e `fcg-{env}-payment-processed-events` + DLQs |
+| `aws_lambda_function` | Lambda `fcg-{env}-notifications` (.NET 8 arm64) com Datadog Extension layer |
+| `aws_lambda_event_source_mapping` | Triggers SQS → Lambda para as duas filas |
+| `aws_dynamodb_table` | Tabela `fcg-{env}-notifications` (NoSQL) com GSI e TTL |
+| `aws_s3_bucket` | Bucket de deploy da Lambda |
+| `aws_ecr_repository` | Registries das imagens dos microsserviços |
+| `aws_ecs_cluster` / `aws_ecs_service` / `aws_instance` | Cluster ECS sobre EC2 que roda os pods das APIs |
+| `aws_iam_role` / policies | Roles com least privilege para Lambda, ECS e tasks |
+| `aws_cloudwatch_log_group` | Log group da Lambda (retenção 14 dias) |
+| `datadog_dashboard` / `datadog_monitor` | Dashboards e monitores configurados via provider Datadog |
 
 ### Pré-requisitos
 
 ```bash
-# AWS CLI
+# AWS CLI configurado
 aws configure
 
-# SAM CLI
-pip install aws-sam-cli
-# ou: brew install aws-sam-cli
+# Terraform >= 1.6
+terraform --version
 
-# .NET 8 SDK
+# .NET 8 SDK (build da Lambda durante o deploy)
 dotnet --version  # >= 8.0
 ```
 
 ### Deploy
 
 ```bash
-cd infrastructure/sam
+cd infrastructure/terraform
 
-# Opção 1 — Script automatizado
+# Variáveis (também aceitas como env vars: TF_VAR_<nome>)
+cp terraform.tfvars.example terraform.tfvars   # preencha os valores
+
+# Gere o par RSA antes (se ainda não tiver) — popula terraform.tfvars
+bash ../scripts/generate-jwt-keys.sh
+
+# Opção 1 — Script automatizado (faz dotnet publish da Lambda + terraform apply)
 export ENVIRONMENT=production
 export USERS_API_URL=https://seu-lb.amazonaws.com
 export CATALOG_API_URL=https://seu-lb.amazonaws.com
-export JWT_KEY=sua-chave-jwt-minimo-32-chars
 export AWS_REGION=us-east-1
 export DD_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-export DD_SITE=datadoghq.com
+export DD_SITE=us5.datadoghq.com
 bash deploy.sh
 
-# Opção 2 — SAM CLI direto
-sam build
-sam deploy --guided
+# Opção 2 — Terraform direto
+terraform init
+terraform plan
+terraform apply
 ```
 
 ### Após o deploy
 
-O SAM exibirá os Outputs. Copie as URLs das filas SQS e configure nos serviços publicadores:
+Os outputs do Terraform expõem o que os serviços precisam:
 
-```
-UsersAPI   → AWS__SQS__UserCreatedQueueUrl    = <UserCreatedEventQueueUrl>
-PaymentsAPI → AWS__SQS__PaymentProcessedQueueUrl = <PaymentProcessedEventQueueUrl>
+```bash
+terraform output                       # lista tudo
+terraform output -raw api_gateway_url  # entrypoint público do sistema
+terraform output -raw sqs_user_created_queue_url
+terraform output -raw sqs_payment_processed_queue_url
 ```
 
-O **ApiGatewayUrl** é o novo ponto de entrada único do sistema.
+Esses valores alimentam o Secret `users-api-sqs` / `payments-api-sqs` do
+overlay K8s de produção (ver `k8s/overlays/prod/sqs-secrets.yaml.example`).
 
 ---
 
@@ -375,38 +581,43 @@ Visível em **APM → Traces → Service Map** do Datadog.
 
 Obtenha a API key em https://app.datadoghq.com/organization-settings/api-keys e configure:
 
+> **Atenção ao `DD_SITE`**: o valor depende do datacenter da sua conta
+> Datadog — `datadoghq.com` (US1), `us5.datadoghq.com` (US5),
+> `datadoghq.eu` (EU). Use o que estiver na URL do seu painel.
+
 **Desenvolvimento local (Docker Compose)**
 ```bash
 # .env
 DD_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-DD_SITE=datadoghq.com
+DD_SITE=us5.datadoghq.com    # ajuste conforme seu datacenter
 ```
 
-**Kubernetes** — crie o Secret antes de aplicar os manifests:
+**Kubernetes** — copie o template e popule:
 ```bash
-kubectl create secret generic datadog-secret \
-  --from-literal=api-key=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
-  -n fcg
-kubectl apply -f k8s/datadog-agent.yaml
+cp k8s/base/datadog-secret.yaml.example k8s/base/datadog-secret.yaml
+# Edite e cole a API key. Depois aplique o overlay normal:
+kubectl apply -k k8s/overlays/local --load-restrictor=LoadRestrictionsNone
 ```
 
-**AWS Lambda** — a chave é passada via parâmetro SAM `NoEcho`:
+**AWS Lambda** — a chave é passada como `TF_VAR_dd_api_key` ao Terraform:
 ```bash
 export DD_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-export DD_SITE=datadoghq.com
-bash infrastructure/sam/deploy.sh
+export DD_SITE=us5.datadoghq.com
+bash infrastructure/terraform/deploy.sh
 ```
 
 ### Acesso aos dashboards
 
-Toda a observabilidade fica em **https://app.datadoghq.com/**:
-- APM → Services: `users-api`, `catalog-api`, `payments-api`, `fcg-notifications-production`
+Toda a observabilidade fica em **https://app.\<seu-site\>.datadoghq.com/**
+(`us5.datadoghq.com` para US5, `datadoghq.com` para US1, etc.):
+- APM → Services: `users-api`, `catalog-api`, `payments-api`,
+  `fcg-local-notifications` (dev) ou `fcg-{env}-notifications` (prod)
 - APM → Traces: filtro `service:catalog-api resource_name:POST /api/games/purchase` para achar o trace da compra
 - APM → Service Map: mostra topologia e dependências (Postgres, Redis, RabbitMQ, SQS, DynamoDB)
-- Logs: query `service:catalog-api env:production`
+- Logs: query `service:catalog-api env:development` (ou `production`)
 - Dashboards → New → "APM Service Overview" (template pronto)
 
-> **Nota**: os logs da Lambda **não passam mais por CloudWatch** — vão direto para o Datadog via Extension. O log group `/aws/lambda/fcg-notifications-*` é mantido apenas para auditoria básica.
+> **Nota**: os logs da Lambda em produção **não passam mais por CloudWatch** — vão direto para o Datadog via Extension. O log group `/aws/lambda/fcg-*-notifications` é mantido apenas para auditoria básica.
 
 ---
 

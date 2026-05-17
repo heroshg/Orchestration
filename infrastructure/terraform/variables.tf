@@ -12,25 +12,16 @@ variable "aws_region" {
   default = "us-east-1"
 }
 
-variable "jwt_key" {
-  type      = string
-  sensitive = true
-  default   = ""
+variable "jwt_rsa_private_key" {
+  type        = string
+  sensitive   = true
+  description = "Chave RSA privada (base64 PEM) usada pela UsersAPI para assinar tokens. Gerada por infrastructure/scripts/generate-jwt-keys.sh"
 }
 
-variable "jwt_key_users" {
-  type      = string
-  sensitive = true
-}
-
-variable "jwt_key_catalog" {
-  type      = string
-  sensitive = true
-}
-
-variable "jwt_key_payments" {
-  type      = string
-  sensitive = true
+variable "jwt_rsa_public_key" {
+  type        = string
+  sensitive   = false
+  description = "Chave RSA pública (base64 PEM) usada pelas 3 APIs e pelo API Gateway (via JWKS) para validar tokens."
 }
 
 variable "db_password" {

@@ -1,0 +1,338 @@
+openapi: 3.0.3
+info:
+  title: FiapCloudGames API
+  description: |
+    Plataforma de distribuição digital de jogos. Esta é a documentação
+    pública das rotas expostas pelo API Gateway. Os detalhes de arquitetura
+    interna (microsserviços, mensageria, persistência) não fazem parte
+    do contrato.
+  version: "1.0"
+
+servers:
+  - url: http://localhost:8080
+    description: Ambiente de desenvolvimento local
+  - url: https://api.fiapcloudgames.com
+    description: Produção
+
+tags:
+  - name: Authentication
+    description: Login e gestão de sessão
+  - name: Users
+    description: Cadastro e administração de usuários
+  - name: Games
+    description: Catálogo de jogos e biblioteca do usuário
+  - name: Orders
+    description: Compras de jogos
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    RegisterUserRequest:
+      type: object
+      required: [name, email, password]
+      properties:
+        name:    { type: string, maxLength: 150, example: "Demo User" }
+        email:   { type: string, format: email, example: "demo@fgc.com" }
+        password: { type: string, minLength: 8, example: "Demo@123" }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:    { type: string, format: email, example: "admin@fgc.com" }
+        password: { type: string, example: "Admin@123" }
+
+    TokenResponse:
+      type: object
+      properties:
+        token:     { type: string, description: "JWT Bearer token" }
+        expiresAt: { type: string, format: date-time }
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        name:     { type: string }
+        email:    { type: string, format: email }
+        isActive: { type: boolean }
+
+    ChangeRoleRequest:
+      type: object
+      required: [role]
+      properties:
+        role: { type: string, enum: [User, Admin] }
+
+    UserDto:
+      type: object
+      properties:
+        id:        { type: string, format: uuid }
+        name:      { type: string }
+        email:     { type: string, format: email }
+        role:      { type: string, enum: [User, Admin] }
+        isActive:  { type: boolean }
+        createdAt: { type: string, format: date-time }
+
+    RegisterGameRequest:
+      type: object
+      required: [name, description, price]
+      properties:
+        name:        { type: string, maxLength: 80, example: "Stellar Odyssey" }
+        description: { type: string, maxLength: 300, example: "Space-exploration RPG." }
+        price:       { type: number, format: double, minimum: 0, example: 59.90 }
+
+    GameDto:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        name:        { type: string }
+        description: { type: string }
+        price:       { type: number, format: double }
+
+    PurchaseRequest:
+      type: object
+      required: [gameId]
+      properties:
+        gameId: { type: string, format: uuid }
+
+    OrderAcceptedResponse:
+      type: object
+      properties:
+        orderId: { type: string, format: uuid }
+        message: { type: string, example: "Order placed. Payment is being processed." }
+
+    ErrorResponse:
+      type: object
+      properties:
+        message: { type: string }
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ─── Authentication ───────────────────────────────────────────────────────
+  /api/users/login:
+    post:
+      tags: [Authentication]
+      summary: Authenticate user
+      description: Returns a JWT Bearer token to be used on protected endpoints.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Token issued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenResponse" }
+        "400":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  # ─── Users ────────────────────────────────────────────────────────────────
+  /api/users:
+    post:
+      tags: [Users]
+      summary: Register a new user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterUserRequest" }
+      responses:
+        "200":
+          description: User created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+    get:
+      tags: [Users]
+      summary: List users (Admin)
+      parameters:
+        - { in: query, name: page,     schema: { type: integer, default: 0 } }
+        - { in: query, name: pageSize, schema: { type: integer, default: 10 } }
+      responses:
+        "200":
+          description: Paginated list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/UserDto" }
+        "401": { description: Unauthorized }
+        "403": { description: Forbidden (requires Admin) }
+
+  /api/users/{id}:
+    get:
+      tags: [Users]
+      summary: Get user by ID (Admin)
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: User found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserDto" }
+        "404": { description: Not found }
+
+    patch:
+      tags: [Users]
+      summary: Update user (Admin)
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateUserRequest" }
+      responses:
+        "200": { description: Updated }
+        "400": { description: Validation error }
+
+    delete:
+      tags: [Users]
+      summary: Delete user (Admin)
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Deleted }
+        "400": { description: Cannot delete }
+
+  /api/users/{id}/role:
+    patch:
+      tags: [Users]
+      summary: Change user role (Admin)
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChangeRoleRequest" }
+      responses:
+        "200": { description: Role updated }
+        "400": { description: Invalid role }
+
+  /api/users/email:
+    get:
+      tags: [Users]
+      summary: Get user by email (Admin)
+      parameters:
+        - { in: query, name: email, required: true, schema: { type: string, format: email } }
+      responses:
+        "200":
+          description: User found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserDto" }
+        "404": { description: Not found }
+
+  /api/users/name:
+    get:
+      tags: [Users]
+      summary: Search users by name (Admin)
+      parameters:
+        - { in: query, name: name, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Matching users
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/UserDto" }
+
+  # ─── Games ────────────────────────────────────────────────────────────────
+  /api/games:
+    get:
+      tags: [Games]
+      summary: List games (authenticated)
+      parameters:
+        - { in: query, name: name,     schema: { type: string } }
+        - { in: query, name: page,     schema: { type: integer, default: 0 } }
+        - { in: query, name: pageSize, schema: { type: integer, default: 10 } }
+      responses:
+        "200":
+          description: Paginated list of games
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/GameDto" }
+
+    post:
+      tags: [Games]
+      summary: Register a new game (Admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterGameRequest" }
+      responses:
+        "200":
+          description: Game created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+        "400": { description: Validation error }
+
+  /api/games/library:
+    get:
+      tags: [Games]
+      summary: Get the authenticated user's game library
+      responses:
+        "200":
+          description: User's games
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/GameDto" }
+        "401": { description: Unauthorized }
+
+  /api/games/purchase:
+    post:
+      tags: [Orders]
+      summary: Initiate a game purchase
+      description: |
+        Triggers the asynchronous purchase flow. The order is queued and
+        processed in the background. Notifications about payment status
+        are delivered out-of-band.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PurchaseRequest" }
+      responses:
+        "202":
+          description: Order accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrderAcceptedResponse" }
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }

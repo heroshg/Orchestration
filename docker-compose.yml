@@ -132,6 +132,7 @@ services:
       DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL: "true"
       DD_CONTAINER_EXCLUDE: "name:fcg-datadog-agent"
       DD_DOGSTATSD_NON_LOCAL_TRAFFIC: "true"
+      REDIS_PASSWORD: "${REDIS_PASSWORD}"   # lida pelo template %%env_REDIS_PASSWORD%% do redisdb check
     ports:
       - "8126:8126"   # APM / traces
       - "8125:8125/udp"  # DogStatsD
@@ -139,9 +140,12 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /proc/:/host/proc/:ro
       - /sys/fs/cgroup/:/host/sys/fs/cgroup:ro
+      - ./infrastructure/datadog/redisdb.yaml:/etc/datadog-agent/conf.d/redisdb.d/conf.yaml:ro
+      - ./infrastructure/datadog/disk.yaml:/etc/datadog-agent/conf.d/disk.d/conf.yaml:ro
     networks:
       - observability
       - messaging
+      - cache
     security_opt:
       - no-new-privileges:true
     deploy:
@@ -149,6 +153,96 @@ services:
         limits:
           memory: 512m
           cpus: "0.5"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # API Gateway (local) — Nginx como substituto do AWS API Gateway v2.
+  # Em produção: aws_apigatewayv2_api (Terraform). Aqui replica rotas+CORS.
+  # Entrypoint único: http://localhost:8080
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  swagger-ui:
+    image: swaggerapi/swagger-ui:v5.17.14
+    container_name: fcg-swagger-ui
+    environment:
+      BASE_URL: /swagger
+      URL: /swagger/openapi.yaml
+      LAYOUT: BaseLayout
+      DEEP_LINKING: "true"
+    networks:
+      - messaging
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: "0.25"
+
+  api-gateway:
+    image: nginx:1.27-alpine
+    container_name: fcg-api-gateway
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./infrastructure/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infrastructure/nginx/openapi.yaml:/etc/nginx/openapi.yaml:ro
+    networks:
+      - messaging   # rede compartilhada com users-api, catalog-api e swagger-ui
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: "0.25"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      users-api:
+        condition: service_started
+      catalog-api:
+        condition: service_started
+      swagger-ui:
+        condition: service_started
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # AWS local — LocalStack
+  # Emula SQS + DynamoDB + Lambda + IAM. Inicializado por init-aws.sh
+  # que cria as filas, a tabela e a função (com event source mappings).
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  localstack:
+    image: localstack/localstack:3.8
+    container_name: fcg-localstack
+    ports:
+      - "4566:4566"   # Edge port (todos os serviços AWS)
+    environment:
+      SERVICES: "sqs,dynamodb,lambda,iam,logs,sts,cloudwatch,apigateway,apigatewayv2,s3"
+      AWS_DEFAULT_REGION: "${AWS_REGION:-us-east-1}"
+      DEBUG: "0"
+      LAMBDA_EXECUTOR: "docker"
+      LAMBDA_DOCKER_NETWORK: "fcg-aws-local"
+      DOCKER_HOST: "unix:///var/run/docker.sock"
+      USERS_API_INTERNAL_URL: "http://users-api:8080"
+      CATALOG_API_INTERNAL_URL: "http://catalog-api:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./infrastructure/localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh:ro
+      - ./infrastructure/localstack/.build:/opt/code/lambda:ro
+    networks:
+      aws-local:
+        aliases:
+          - localstack
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 60s
 
   # ═══════════════════════════════════════════════════════════════════════════
   # Mensageria — RabbitMQ (desenvolvimento local)
@@ -185,23 +279,31 @@ services:
 
   users-api:
     image: users-api:latest
+    build:
+      context: ../UsersAPI
+      dockerfile: Dockerfile
     container_name: fcg-users-api
     ports:
       - "5001:8080"
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__Users: "Host=users-postgres;Port=5432;Database=users_db;Username=postgres;Password=${POSTGRES_PASSWORD}"
-      Jwt__Key: "${JWT_KEY_USERS}"
+      Jwt__RsaPrivateKey: "${JWT_RSA_PRIVATE_KEY}"
+      Jwt__RsaPublicKey: "${JWT_RSA_PUBLIC_KEY}"
       Jwt__Issuer: "FiapCloudGames"
       Jwt__Audience: "FiapCloudGames"
       # Desenvolvimento local: usa RabbitMQ
       RabbitMQ__Host: "rabbitmq"
       RabbitMQ__Username: "${RABBITMQ_USER}"
       RabbitMQ__Password: "${RABBITMQ_PASSWORD}"
-      # Produção AWS: descomente e configure as variáveis abaixo
-      # Messaging__Provider: "SQS"
-      # AWS__Region: "${AWS_REGION}"
-      # AWS__SQS__UserCreatedQueueUrl: "${SQS_USER_CREATED_QUEUE_URL}"
+      # ─── AWS (apontando para LocalStack em dev) ───────────────────────
+      AWS__Region: "${AWS_REGION:-us-east-1}"
+      AWS__SQS__UserCreatedQueueUrl: "http://localstack:4566/000000000000/fcg-local-user-created-events"
+      AWS_ACCESS_KEY_ID: "test"
+      AWS_SECRET_ACCESS_KEY: "test"
+      AWS_DEFAULT_REGION: "${AWS_REGION:-us-east-1}"
+      AWS_ENDPOINT_URL: "http://localstack:4566"
+      AWS_ENDPOINT_URL_SQS: "http://localstack:4566"
       # Cache
       Redis__ConnectionString: "redis:6379,password=${REDIS_PASSWORD}"
       # ─── Datadog APM ──────────────────────────────────────────────────
@@ -229,6 +331,7 @@ services:
       - messaging
       - cache
       - observability
+      - aws-local
     security_opt:
       - no-new-privileges:true
     read_only: true
@@ -246,17 +349,22 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      localstack:
+        condition: service_healthy
     restart: on-failure
 
   catalog-api:
     image: catalog-api:latest
+    build:
+      context: ../CatalogAPI
+      dockerfile: Dockerfile
     container_name: fcg-catalog-api
     ports:
       - "5002:8080"
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__Catalog: "Host=catalog-postgres;Port=5432;Database=catalog_db;Username=postgres;Password=${POSTGRES_PASSWORD}"
-      Jwt__Key: "${JWT_KEY_CATALOG}"
+      Jwt__RsaPublicKey: "${JWT_RSA_PUBLIC_KEY}"
       Jwt__Issuer: "FiapCloudGames"
       Jwt__Audience: "FiapCloudGames"
       RabbitMQ__Host: "rabbitmq"
@@ -310,23 +418,30 @@ services:
 
   payments-api:
     image: payments-api:latest
+    build:
+      context: ../PaymentsAPI
+      dockerfile: Dockerfile
     container_name: fcg-payments-api
     ports:
       - "5003:8080"
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__Payments: "Host=payments-postgres;Port=5432;Database=payments_db;Username=postgres;Password=${POSTGRES_PASSWORD}"
-      Jwt__Key: "${JWT_KEY_PAYMENTS}"
+      Jwt__RsaPublicKey: "${JWT_RSA_PUBLIC_KEY}"
       Jwt__Issuer: "FiapCloudGames"
       Jwt__Audience: "FiapCloudGames"
       # Desenvolvimento local: usa RabbitMQ
       RabbitMQ__Host: "rabbitmq"
       RabbitMQ__Username: "${RABBITMQ_USER}"
       RabbitMQ__Password: "${RABBITMQ_PASSWORD}"
-      # Produção AWS: descomente e configure as variáveis abaixo
-      # Messaging__Provider: "SQS"
-      # AWS__Region: "${AWS_REGION}"
-      # AWS__SQS__PaymentProcessedQueueUrl: "${SQS_PAYMENT_PROCESSED_QUEUE_URL}"
+      # ─── AWS (apontando para LocalStack em dev) ───────────────────────
+      AWS__Region: "${AWS_REGION:-us-east-1}"
+      AWS__SQS__PaymentProcessedQueueUrl: "http://localstack:4566/000000000000/fcg-local-payment-processed-events"
+      AWS_ACCESS_KEY_ID: "test"
+      AWS_SECRET_ACCESS_KEY: "test"
+      AWS_DEFAULT_REGION: "${AWS_REGION:-us-east-1}"
+      AWS_ENDPOINT_URL: "http://localstack:4566"
+      AWS_ENDPOINT_URL_SQS: "http://localstack:4566"
       # ─── Datadog APM ──────────────────────────────────────────────────
       DD_SERVICE: "payments-api"
       DD_ENV: "development"
@@ -351,6 +466,7 @@ services:
       - payments-db
       - messaging
       - observability
+      - aws-local
     security_opt:
       - no-new-privileges:true
     read_only: true
@@ -365,6 +481,8 @@ services:
       payments-postgres:
         condition: service_healthy
       rabbitmq:
+        condition: service_healthy
+      localstack:
         condition: service_healthy
     restart: on-failure
 
@@ -387,6 +505,9 @@ networks:
   cache:
     driver: bridge
   observability:
+    driver: bridge
+  aws-local:
+    name: fcg-aws-local
     driver: bridge
 
 volumes:

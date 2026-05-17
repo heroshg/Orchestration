@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: payments-postgres-pvc
+  namespace: fcg
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments-postgres
+  namespace: fcg
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payments-postgres
+  template:
+    metadata:
+      labels:
+        app: payments-postgres
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: payments-postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "FOWNER", "SETUID", "SETGID"]
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          env:
+            - name: POSTGRES_USER
+              value: "postgres"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: password
+            - name: POSTGRES_DB
+              value: "payments_db"
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 10
+          volumeMounts:
+            - mountPath: /var/lib/postgresql/data
+              name: payments-postgres-storage
+      volumes:
+        - name: payments-postgres-storage
+          persistentVolumeClaim:
+            claimName: payments-postgres-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payments-postgres
+  namespace: fcg
+spec:
+  selector:
+    app: payments-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+  type: ClusterIP

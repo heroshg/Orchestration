@@ -1,0 +1,75 @@
+# =============================================================================
+# LocalStack — emula SQS + DynamoDB + S3 + Logs + IAM no cluster local.
+# Usar APENAS em clusters de desenvolvimento (kind / minikube / Docker Desktop).
+# A imagem fcg-localstack:local é gerada por:
+#   docker build -t fcg-localstack:local infrastructure/localstack/
+#
+# LIMITAÇÃO CONHECIDA: Lambda NÃO é emulada no K8s (container-in-container
+# com múltiplas redes Docker é uma topologia frágil). Para testar a Lambda
+# localmente use Compose (`docker compose up`) ou `sam local invoke`.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: localstack
+  namespace: fcg
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: localstack
+  template:
+    metadata:
+      labels:
+        app: localstack
+    spec:
+      containers:
+        - name: localstack
+          image: fcg-localstack:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 4566
+          env:
+            - name: SERVICES
+              value: "sqs,dynamodb,iam,logs,sts,cloudwatch,apigateway,apigatewayv2,s3"
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"
+            - name: DEBUG
+              value: "0"
+            - name: USERS_API_INTERNAL_URL
+              value: "http://users-api.fcg.svc.cluster.local:8080"
+            - name: CATALOG_API_INTERNAL_URL
+              value: "http://catalog-api.fcg.svc.cluster.local:8080"
+            # Pula criação da função Lambda + ESMs no init-aws.sh.
+            # SQS, DynamoDB, S3 e Logs continuam normais.
+            - name: SKIP_LAMBDA
+              value: "true"
+          readinessProbe:
+            httpGet:
+              path: /_localstack/health
+              port: 4566
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            failureThreshold: 30
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "300m"
+            limits:
+              memory: "1Gi"
+              cpu: "1"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: localstack
+  namespace: fcg
+spec:
+  selector:
+    app: localstack
+  ports:
+    - port: 4566
+      targetPort: 4566
+  type: ClusterIP

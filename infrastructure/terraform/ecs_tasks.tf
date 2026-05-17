@@ -194,7 +194,8 @@ resource "aws_ecs_task_definition" "users_api" {
       { name = "RabbitMQ__Host",           value = local.rmq_host },
       { name = "RabbitMQ__Username",       value = local.rmq_user },
       { name = "RabbitMQ__Password",       value = local.rmq_password },
-      { name = "Jwt__Key",                      value = var.jwt_key_users },
+      { name = "Jwt__RsaPrivateKey",            value = var.jwt_rsa_private_key },
+      { name = "Jwt__RsaPublicKey",             value = var.jwt_rsa_public_key },
       { name = "Jwt__Issuer",                   value = "FiapCloudGames" },
       { name = "Jwt__Audience",                 value = "FiapCloudGames" },
       { name = "AWS__Region",                   value = var.aws_region },
@@ -264,7 +265,7 @@ resource "aws_ecs_task_definition" "catalog_api" {
       { name = "RabbitMQ__Host",             value = local.rmq_host },
       { name = "RabbitMQ__Username",         value = local.rmq_user },
       { name = "RabbitMQ__Password",         value = local.rmq_password },
-      { name = "Jwt__Key",                   value = var.jwt_key_users },
+      { name = "Jwt__RsaPublicKey",          value = var.jwt_rsa_public_key },
       { name = "Jwt__Issuer",                value = "FiapCloudGames" },
       { name = "Jwt__Audience",              value = "FiapCloudGames" }
     ]
@@ -332,7 +333,7 @@ resource "aws_ecs_task_definition" "payments_api" {
       { name = "RabbitMQ__Host",                   value = local.rmq_host },
       { name = "RabbitMQ__Username",               value = local.rmq_user },
       { name = "RabbitMQ__Password",               value = local.rmq_password },
-      { name = "Jwt__Key",                         value = var.jwt_key_users },
+      { name = "Jwt__RsaPublicKey",                value = var.jwt_rsa_public_key },
       { name = "Jwt__Issuer",                      value = "FiapCloudGames" },
       { name = "Jwt__Audience",                    value = "FiapCloudGames" },
       { name = "AWS__Region",                      value = var.aws_region },
