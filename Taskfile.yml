@@ -1,0 +1,236 @@
+# =============================================================================
+# FiapCloudGames — Task runner (go-task).
+#
+# Instale uma vez:  https://taskfile.dev/installation/
+#   choco install go-task     # Windows
+#   brew install go-task      # macOS
+#   curl -sL https://taskfile.dev/install.sh | sh   # Linux/WSL
+#
+# Listar tasks:   task         (ou task --list-all)
+# Quick start:    task up      (Compose) | task k8s:up (K8s)
+# =============================================================================
+version: '3'
+
+vars:
+  COMPOSE: docker compose
+  AWS_REGION: '{{.AWS_REGION | default "us-east-1"}}'
+  ECS_CLUSTER: fcg-production-cluster
+
+tasks:
+
+  default:
+    desc: Lista todas as tasks disponíveis
+    cmd: task --list-all
+    silent: true
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # INIT — setup one-shot (idempotente)
+  # ───────────────────────────────────────────────────────────────────────────
+
+  init:
+    desc: First-time setup — .env, chaves RSA, Lambda zip
+    cmds:
+      - task: init:env
+      - task: init:keys
+      - task: init:lambda
+
+  init:env:
+    desc: Copia .env.example → .env (skip se já existe)
+    status:
+      - bash -c 'test -f .env'
+    cmd: bash -c 'cp .env.example .env'
+
+  init:keys:
+    desc: Gera par RSA + injeta no .env (skip se já preenchido)
+    status:
+      - bash -c "grep -Eq '^JWT_RSA_PRIVATE_KEY=[A-Za-z0-9+/=]{100,}' .env"
+    cmd: bash infrastructure/scripts/generate-jwt-keys.sh --inject-env
+
+  init:lambda:
+    desc: Empacota NotificationsLambda para LocalStack (re-roda só se .cs mudou)
+    sources:
+      - ../NotificationsLambda/src/**/*.cs
+      - ../NotificationsLambda/src/**/*.csproj
+    generates:
+      - infrastructure/localstack/.build/notifications-lambda.zip
+    cmd: bash infrastructure/localstack/build-lambda.sh
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # DOCKER COMPOSE — dev local
+  # ───────────────────────────────────────────────────────────────────────────
+
+  up:
+    desc: Sobe a stack local (compose). Roda init se necessário
+    deps: [init]
+    cmd: '{{.COMPOSE}} up -d --build'
+
+  down:
+    desc: Para e remove os containers
+    cmd: '{{.COMPOSE}} down'
+
+  watch:
+    desc: 'Hot-reload: rebuild automático ao alterar .cs das APIs'
+    deps: [init]
+    cmd: '{{.COMPOSE}} up --build --watch'
+
+  ps:
+    desc: Lista containers e status
+    cmd: '{{.COMPOSE}} ps'
+
+  logs:
+    desc: 'Tail dos logs. Ex.: task logs svc=api-gateway (omita svc para tudo)'
+    cmd: '{{.COMPOSE}} logs -f --tail=100 {{.svc}}'
+
+  restart:
+    desc: 'Restart de um serviço. Ex.: task restart svc=users-api'
+    cmd: '{{.COMPOSE}} restart {{.svc}}'
+
+  rebuild:
+    desc: 'Rebuild + recreate de um serviço. Ex.: task rebuild svc=users-api'
+    cmd: '{{.COMPOSE}} up -d --build --force-recreate {{.svc}}'
+
+  shell:
+    desc: 'Abre shell no container. Ex.: task shell svc=users-api'
+    cmd: '{{.COMPOSE}} exec {{.svc}} sh'
+
+  clean:
+    desc: Para tudo + apaga volumes, .keys, Lambda zip (fresh start)
+    cmds:
+      - '{{.COMPOSE}} down -v --remove-orphans'
+      - cmd: rm -rf .keys infrastructure/localstack/.build
+        ignore_error: true
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # TEST — smoke test end-to-end
+  # ───────────────────────────────────────────────────────────────────────────
+
+  test:
+    desc: Smoke test no gateway local (gateway local em :8080)
+    cmd: bash infrastructure/scripts/smoke-test.sh http://localhost:8080
+
+  test:aws:
+    desc: Smoke test no API Gateway AWS de produção
+    vars:
+      URL:
+        sh: terraform -chdir=infrastructure/terraform output -raw api_gateway_url
+    cmd: bash infrastructure/scripts/smoke-test.sh {{.URL}}
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # KUBERNETES LOCAL (kind)
+  # ───────────────────────────────────────────────────────────────────────────
+
+  k8s:up:
+    desc: Cluster kind + imagens + secrets + deploy completo
+    deps: [init]
+    cmds:
+      - task: k8s:cluster
+      - task: k8s:images
+      - task: k8s:secrets
+      - kubectl apply -k k8s/overlays/local --load-restrictor=LoadRestrictionsNone
+      - kubectl wait --for=condition=ready pod -l app=api-gateway -n fcg --timeout=180s
+      - echo ""
+      - echo "✓ Pronto. Rode 'task k8s:forward' e acesse http://localhost:8080/swagger/"
+
+  k8s:cluster:
+    desc: Cria cluster kind 'fcg' (skip se já existe)
+    status:
+      - bash -c "kind get clusters 2>/dev/null | grep -q '^fcg$'"
+    cmd: kind create cluster --name fcg --config k8s/kind-config.yaml
+
+  k8s:images:
+    desc: Builda imagens das APIs + LocalStack e carrega no kind
+    cmds:
+      - docker build -t users-api:latest ../UsersAPI
+      - docker build -t catalog-api:latest ../CatalogAPI
+      - docker build -t payments-api:latest ../PaymentsAPI
+      - docker build -t fcg-localstack:local infrastructure/localstack/
+      - kind load docker-image users-api:latest catalog-api:latest payments-api:latest fcg-localstack:local --name fcg
+
+  k8s:secrets:
+    desc: Gera todos os Secrets k8s a partir do .env (única fonte)
+    cmd: bash infrastructure/scripts/k8s-secrets-from-env.sh
+
+  k8s:forward:
+    desc: Port-forward Kong gateway em http://localhost:8080
+    cmd: kubectl port-forward -n fcg svc/api-gateway 8080:8000
+
+  k8s:logs:
+    desc: 'Logs de uma API. Ex.: task k8s:logs app=users-api'
+    cmd: kubectl logs -n fcg -l app={{.app}} -f --tail=100
+
+  k8s:pods:
+    desc: Lista pods do namespace fcg
+    cmd: kubectl get pods -n fcg -o wide
+
+  k8s:rollout:
+    desc: 'Force redeploy de uma API após nova imagem. Ex.: task k8s:rollout svc=users-api'
+    requires:
+      vars: [svc]
+    vars:
+      CONTEXT_DIR: '{{if eq .svc "users-api"}}../UsersAPI{{else if eq .svc "catalog-api"}}../CatalogAPI{{else if eq .svc "payments-api"}}../PaymentsAPI{{else}}INVALID{{end}}'
+    cmds:
+      - docker build -t {{.svc}}:latest {{.CONTEXT_DIR}}
+      - kind load docker-image {{.svc}}:latest --name fcg
+      - kubectl rollout restart deployment/{{.svc}} -n fcg
+      - kubectl rollout status deployment/{{.svc}} -n fcg --timeout=120s
+
+  k8s:down:
+    desc: Remove namespace fcg (mantém o cluster)
+    cmd: kubectl delete namespace fcg --ignore-not-found
+
+  k8s:nuke:
+    desc: Destrói o cluster kind inteiro
+    cmd: kind delete cluster --name fcg
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # AWS — deploy & operação de produção
+  # ───────────────────────────────────────────────────────────────────────────
+
+  aws:deploy:
+    desc: 'Build + push ECR + redeploy ECS. Ex.: task aws:deploy svc=users-api'
+    requires:
+      vars: [svc]
+    vars:
+      ACCOUNT_ID:
+        sh: aws sts get-caller-identity --query Account --output text
+      ECR_URI: '{{.ACCOUNT_ID}}.dkr.ecr.{{.AWS_REGION}}.amazonaws.com/{{.svc}}'
+      CONTEXT_DIR: '{{if eq .svc "users-api"}}../UsersAPI{{else if eq .svc "catalog-api"}}../CatalogAPI{{else if eq .svc "payments-api"}}../PaymentsAPI{{else}}INVALID{{end}}'
+    cmds:
+      - echo "→ Login no ECR..."
+      - aws ecr get-login-password --region {{.AWS_REGION}} | docker login --username AWS --password-stdin {{.ACCOUNT_ID}}.dkr.ecr.{{.AWS_REGION}}.amazonaws.com
+      - echo "→ Build {{.svc}}..."
+      - docker build -t {{.ECR_URI}}:latest {{.CONTEXT_DIR}}
+      - echo "→ Push para ECR..."
+      - docker push {{.ECR_URI}}:latest
+      - echo "→ Force redeploy ECS..."
+      - aws ecs update-service --cluster {{.ECS_CLUSTER}} --service fcg-production-{{.svc}} --force-new-deployment --region {{.AWS_REGION}} --no-cli-pager > /dev/null
+      - echo "→ Aguardando service estabilizar..."
+      - aws ecs wait services-stable --cluster {{.ECS_CLUSTER}} --services fcg-production-{{.svc}} --region {{.AWS_REGION}}
+      - echo "✓ {{.svc}} deployado"
+
+  aws:logs:
+    desc: 'Tail dos logs CloudWatch. Ex.: task aws:logs svc=users-api'
+    requires:
+      vars: [svc]
+    cmd: aws logs tail /ecs/fcg-production-{{.svc}} --follow --region {{.AWS_REGION}}
+
+  aws:url:
+    desc: URL público do API Gateway de produção
+    cmd: terraform -chdir=infrastructure/terraform output -raw api_gateway_url
+
+  aws:terraform:
+    desc: 'Terraform apply. Ex.: task aws:terraform -- -target=aws_apigatewayv2_api.fcg'
+    cmd: terraform -chdir=infrastructure/terraform apply {{.CLI_ARGS}}
+
+  aws:plan:
+    desc: 'Terraform plan. Ex.: task aws:plan -- -target=aws_ecs_service.users_api'
+    cmd: terraform -chdir=infrastructure/terraform plan {{.CLI_ARGS}}
+
+  aws:status:
+    desc: Status atual dos services ECS em produção
+    cmd: |
+      aws ecs describe-services --cluster {{.ECS_CLUSTER}} \
+        --services fcg-production-users-api fcg-production-catalog-api fcg-production-payments-api \
+        --region {{.AWS_REGION}} \
+        --query 'services[].[serviceName,status,desiredCount,runningCount]' \
+        --output table

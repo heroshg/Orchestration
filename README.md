@@ -1,647 +1,659 @@
 # FiapCloudGames — Orquestração
 
-Repositório central de orquestração da plataforma **FiapCloudGames**: Docker Compose para desenvolvimento local, manifests Kubernetes (Kustomize) para dev/prod e infraestrutura AWS como código (Terraform).
+Repositório central de orquestração da plataforma **FiapCloudGames**: Docker Compose para desenvolvimento local, manifests Kubernetes (Kustomize + script imperativo) e infraestrutura AWS como código (Terraform).
 
 ---
 
 ## Sumário
 
-- [Evolução da Arquitetura](#evolução-da-arquitetura)
-- [Fase 3 — Arquitetura AWS (atual)](#fase-3--arquitetura-aws-atual)
+- [Quick Start (local)](#quick-start-local)
+- [Arquitetura Local](#arquitetura-local)
+- [Arquitetura AWS (Fase 3)](#arquitetura-aws-fase-3)
 - [Stack de Tecnologias](#stack-de-tecnologias)
-- [Fluxos de Eventos](#fluxos-de-eventos)
-- [Executando com Docker Compose](#executando-com-docker-compose)
-- [Deploy no Kubernetes](#deploy-no-kubernetes)
+- [Como testar a aplicação](#como-testar-a-aplicação)
+- [Deploy no Kubernetes local](#deploy-no-kubernetes-local)
 - [Deploy AWS (Terraform)](#deploy-aws-terraform)
 - [Observabilidade — Datadog APM](#observabilidade--datadog-apm)
-- [Repositórios dos Microsserviços](#repositórios-dos-microsserviços)
+- [Taskfile — referência das tasks](#taskfile--referência-das-tasks)
+- [Repositórios dos microsserviços](#repositórios-dos-microsserviços)
 
 ---
 
-## Evolução da Arquitetura
+## Quick Start (local)
 
-| Fase | Descrição | Destaque |
-|------|-----------|---------|
-| **Fase 1** | Monolito .NET 8 | Banco único, sem mensageria |
-| **Fase 2** | Microsserviços + RabbitMQ | 4 serviços independentes, MassTransit, K8s |
-| **Fase 3** | Arquitetura AWS profissional | Lambda, SQS, DynamoDB, API GW, Redis, Observabilidade |
+**Pré-requisitos** — instale uma vez por máquina:
+- [Docker Desktop](https://docs.docker.com/desktop/) com Compose v2
+- [go-task](https://taskfile.dev/installation/) — `winget install Task.Task` · `brew install go-task` · `curl -sL https://taskfile.dev/install.sh | sh`
+- (opcional, só para o caminho K8s) [kind](https://kind.sigs.k8s.io/) + `kubectl`
+
+**Subir o ambiente:**
+
+```bash
+task up        # init (chaves, lambda, .env) + docker compose up. ~2min na 1ª vez
+task test      # smoke test 6/6 contra http://localhost:8080
+```
+
+Pronto. Entrypoint único em **http://localhost:8080/swagger/** — mesma URL, rotas e validação JWT que o AWS API Gateway em produção. `task up` é idempotente: re-rodar pula etapas já feitas (chaves geradas, Lambda já buildada, etc).
+
+### O que sobe no Compose
+
+11 containers, ~3 GB de RAM: `users-postgres`, `catalog-postgres`, `payments-postgres`, `redis`, `rabbitmq`, `localstack`, `users-api`, `catalog-api`, `payments-api`, `api-gateway` (Kong), `swagger-ui` — mais `datadog-agent` (opcional se você setar `DD_API_KEY`).
+
+### Comandos mais usados
+
+```bash
+task                            # lista as 32 tasks
+task watch                      # hot-reload: rebuild auto ao editar .cs nas APIs
+task logs svc=api-gateway       # tail dos logs de um serviço
+task rebuild svc=users-api      # rebuild + recreate uma API após mudar código
+task test                       # smoke test local (6 checagens)
+task test:aws                   # smoke test contra o API Gateway de produção
+task k8s:up                     # mesma stack, mas em Kubernetes (kind)
+task aws:deploy svc=users-api   # build + push ECR + redeploy ECS de uma API
+task aws:status                 # tabela com runningCount de cada service ECS
+task down                       # para tudo
+task clean                      # fresh start (apaga volumes + .keys + lambda zip)
+```
+
+> **Setup manual** (se não quiser instalar go-task): `cp .env.example .env` → `bash infrastructure/scripts/generate-jwt-keys.sh --inject-env` → `bash infrastructure/localstack/build-lambda.sh` → `docker compose up -d --build`. O Taskfile só encapsula esses passos com idempotência e cross-platform.
 
 ---
 
-## Fase 3 — Arquitetura AWS (atual)
+## Arquitetura Local
 
 ```
-                    ┌─────────────────────────────────┐
-                    │       AWS API Gateway            │
-                    │   (CORS + Throttling + Rotas)    │
-                    └────────────┬────────────┬────────┘
-                                 │            │
-              ┌──────────────────▼──┐    ┌────▼─────────────────┐
-              │      UsersAPI       │    │      CatalogAPI       │
-              │   (K8s / EKS)       │    │    (K8s / EKS)        │
-              │  ┌───────────────┐  │    │  ┌────────────────┐   │
-              │  │ PostgreSQL    │  │    │  │ PostgreSQL     │   │
-              │  │ (RDS)         │  │    │  │ (RDS)          │   │
-              │  └───────────────┘  │    │  └────────────────┘   │
-              │  ┌───────────────┐  │    │  ┌────────────────┐   │
-              │  │ Redis Cache   │◄─┼────┼─►│ Redis Cache    │   │
-              │  │ (ElastiCache) │  │    │  │ (ElastiCache)  │   │
-              │  └───────────────┘  │    │  └────────────────┘   │
-              └──────────┬──────────┘    └────────┬──────────────┘
-                         │                        │
-                         │  publica               │  publica
-                         ▼                        ▼
-              ┌─────────────────┐      ┌─────────────────────────┐
-              │ SQS Queue       │      │ PaymentsAPI (K8s / EKS) │
-              │ UserCreated     │      │  └─► SQS Queue          │
-              │ Events          │      │      PaymentProcessed   │
-              └────────┬────────┘      │      Events             │
-                       │               └────────────┬────────────┘
-                       │                            │
-                       └──────────┬─────────────────┘
-                                  │ trigger
-                                  ▼
-                    ┌─────────────────────────────────┐
-                    │       AWS Lambda                 │
-                    │   NotificationsFunction          │
-                    │   (fcg-notifications-production) │
-                    │                                  │
-                    │  ┌───────────────────────────┐  │
-                    │  │ DynamoDB                  │  │
-                    │  │ fcg-notifications          │  │
-                    │  │ (log de notificações)      │  │
-                    │  └───────────────────────────┘  │
-                    └─────────────────────────────────┘
+                                  ┌───────────────────────────────────┐
+                                  │           Cliente / curl           │
+                                  │       http://localhost:8080        │
+                                  └────────────────┬───────────────────┘
+                                                   │
+                                                   ▼
+                         ┌─────────────────────────────────────────────┐
+                         │           Kong API Gateway (3.7)            │
+                         │       DB-less · plugin JWT (RS256)          │
+                         │  Rotas + CORS + Rate-limit (50 rps)         │
+                         │  Espelha api_gateway.tf (HTTP API v2)       │
+                         └──┬──────────────────┬──────────────────┬────┘
+                            │                  │                  │
+              ┌─────────────▼──┐  ┌────────────▼────┐  ┌──────────▼─────┐
+              │   UsersAPI     │  │   CatalogAPI     │  │  Swagger UI    │
+              │   :5001        │  │   :5002          │  │  spec curado   │
+              │ JWT signing    │  │ JWT validation   │  └────────────────┘
+              │ JWKS endpoint  │  │                  │
+              └──┬──────────┬──┘  └──┬──────────┬────┘
+                 │          │        │          │
+                 ▼          ▼        ▼          ▼
+        ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+        │ users-       │  │ Redis 7.2    │  │ catalog-     │
+        │ postgres     │  │ (cache)      │  │ postgres     │
+        └──────────────┘  └──────────────┘  └──────────────┘
+                                                  │ publica OrderPlaced
+                                                  ▼
+                              ┌────────────────────────────────────────┐
+                              │            RabbitMQ 3.13               │
+                              └───────────────┬────────────────────────┘
+                                              │ consome
+                                              ▼
+                            ┌────────────────────────────────┐
+                            │         PaymentsAPI :5003      │
+                            │   simula pagamento (90% ok)    │
+                            └──┬───────────────────┬─────────┘
+                               │                   │
+                               ▼                   │ publica
+                       ┌──────────────┐            │ PaymentProcessed
+                       │ payments-    │            ▼
+                       │ postgres     │   ┌──────────────────────────────┐
+                       └──────────────┘   │       LocalStack 3.8         │
+                                          │  emula AWS: SQS, DynamoDB,   │
+                                          │  Lambda, S3, CloudWatch      │
+                                          │  ┌────────────────────────┐  │
+                                          │  │ Lambda Notifications   │  │
+                                          │  │ (.NET 8 do .zip local) │  │
+                                          │  └───────────┬────────────┘  │
+                                          │              ▼               │
+                                          │  ┌────────────────────────┐  │
+                                          │  │  DynamoDB              │  │
+                                          │  │  fcg-local-            │  │
+                                          │  │  notifications         │  │
+                                          │  └────────────────────────┘  │
+                                          └──────────────────────────────┘
 
-                    ┌─────────────────────────────────┐
-                    │   Observabilidade — Datadog      │
-                    │   APM + Logs + Traces + Metrics  │
-                    │   (Agent DaemonSet no K8s +      │
-                    │    Datadog Extension na Lambda)  │
-                    └─────────────────────────────────┘
+                          ┌─────────────────────────────────────────────┐
+                          │   Datadog Agent (DD_API_KEY) — opcional     │
+                          │   APM + logs + métricas de todos containers │
+                          └─────────────────────────────────────────────┘
 ```
+
+**Pontos-chave:**
+- **Kong** substitui o AWS API Gateway HTTP API v2 localmente — mesmas rotas, CORS, throttling e validação JWT (RS256) usando a chave pública RSA exposta pela UsersAPI.
+- **LocalStack** emula SQS + DynamoDB + Lambda + S3 + CloudWatch Logs. O fluxo `SQS → Lambda → DynamoDB` roda end-to-end sem AWS.
+- **JWT** é assinado pela UsersAPI (chave privada) e validado em três pontos: Kong (no gateway), Catalog/Payments API ([Authorize]), e em produção pelo AWS API Gateway via JWKS.
+
+---
+
+## Arquitetura AWS (Fase 3)
+
+```
+              ┌─────────────────────────────────┐
+              │       AWS API Gateway v2         │
+              │   CORS + Throttling + JWT auth   │
+              └────────────┬────────────┬────────┘
+                           │            │
+        ┌──────────────────▼──┐    ┌────▼─────────────────┐
+        │   UsersAPI (ECS)    │    │   CatalogAPI (ECS)   │
+        │  ┌───────────────┐  │    │  ┌────────────────┐  │
+        │  │ PostgreSQL    │  │    │  │ PostgreSQL     │  │
+        │  └───────────────┘  │    │  └────────────────┘  │
+        │  ┌───────────────┐  │    │  ┌────────────────┐  │
+        │  │ Redis Cache   │◄─┼────┼─►│ Redis Cache    │  │
+        │  └───────────────┘  │    │  └────────────────┘  │
+        └──────────┬──────────┘    └────────┬─────────────┘
+                   │ publica                │
+                   ▼                        ▼
+        ┌─────────────────┐      ┌─────────────────────────┐
+        │ SQS Queue       │      │ PaymentsAPI (ECS)       │
+        │ UserCreated     │      │   └─► SQS Queue         │
+        └────────┬────────┘      │       PaymentProcessed  │
+                 │               └────────────┬────────────┘
+                 └──────────┬─────────────────┘
+                            │ trigger
+                            ▼
+              ┌─────────────────────────────────┐
+              │  AWS Lambda — Notifications     │
+              │  (.NET 8 arm64) → DynamoDB      │
+              └─────────────────────────────────┘
+```
+
+| Fase | Descrição |
+|------|-----------|
+| Fase 1 | Monolito .NET 8, banco único |
+| Fase 2 | Microsserviços + RabbitMQ + Kustomize |
+| **Fase 3** | **AWS API Gateway v2, ECS, Lambda, SQS, DynamoDB, Redis, Datadog** |
 
 ---
 
 ## Stack de Tecnologias
 
 ### API Gateway
-- **AWS API Gateway (HTTP API v2)** — ponto de entrada único com roteamento, CORS, throttling e **JWT Authorizer nativo** (RS256) para UsersAPI e CatalogAPI
-- Tokens são assinados em RSA pela UsersAPI; o gateway busca a chave pública via JWKS endpoint (`/.well-known/jwks.json`)
-- Rotas públicas (sem JWT): `POST /api/users` (cadastro), `POST /api/users/login`, `GET /.well-known/*`
-- Em desenvolvimento, o gateway é representado por um proxy reverso Nginx (`infrastructure/nginx/nginx.conf`) que reproduz rotas, CORS e throttling. A validação JWT em dev acontece nas próprias APIs
-- Configuração de produção: `infrastructure/terraform/api_gateway.tf`
+| Ambiente | Implementação | Auth |
+|---|---|---|
+| Local (compose / k8s) | **Kong 3.7 OSS** (DB-less, `infrastructure/kong/kong.yml`) | Plugin `jwt` (RS256, chave estática) |
+| AWS | **API Gateway HTTP API v2** (`infrastructure/terraform/api_gateway.tf`) | Authorizer JWT nativo (via JWKS endpoint da UsersAPI) |
 
-### Serverless — NotificationsAPI
-- **AWS Lambda** (.NET 8, arm64) — substitui o container que rodava continuamente
-- **Trigger**: Amazon SQS (EventSourceMapping direto, sem polling manual)
-- **Persistência**: Amazon DynamoDB (persistência poliglota — NoSQL)
-- Código: pasta `NotificationsLambda/` neste repositório
+Ambos espelham as mesmas rotas:
+
+| Rota | Auth |
+|---|---|
+| `POST /api/users` | público (cadastro) |
+| `POST /api/users/login` | público (autenticação) |
+| `GET /.well-known/*` | público (JWKS / OIDC discovery) |
+| `GET /swagger/*` | público (somente local) |
+| `ANY /api/users/{path}` | JWT |
+| `GET\|POST /api/games` | JWT |
+| `ANY /api/games/{path}` | JWT |
+
+### Serverless — NotificationsLambda
+- **AWS Lambda** (.NET 8 arm64) — trigger Amazon SQS (EventSourceMapping)
+- **DynamoDB** para log de notificações (persistência poliglota)
 - IaC: `infrastructure/terraform/lambda.tf`
+- Local: emulada via LocalStack (`infrastructure/localstack/`)
 
 ### Mensageria
 | Ambiente | Broker |
 |----------|--------|
-| Desenvolvimento local | RabbitMQ 3.13 (Docker) |
-| Produção AWS | Amazon SQS (gerenciado, sem servidor) |
+| Local | RabbitMQ 3.13 (entre APIs) + LocalStack SQS (para Lambda) |
+| AWS | Amazon SQS para tudo |
 
 ### Cache
-- **Redis 7.2** via `StackExchange.Redis` / `IDistributedCache` do ASP.NET Core
-- Desenvolvimento: container Docker
-- Produção AWS: Amazon ElastiCache for Redis
+- **Redis 7.2** via `StackExchange.Redis` / `IDistributedCache`
+- Local: container · AWS: ElastiCache
 
-### Persistência Poliglota
+### Persistência poliglota
 | Serviço | Banco |
 |---------|-------|
-| UsersAPI | PostgreSQL (RDS) |
-| CatalogAPI | PostgreSQL (RDS) |
-| PaymentsAPI | PostgreSQL (RDS) |
-| NotificationsAPI | **DynamoDB** (NoSQL — log de notificações) |
+| UsersAPI, CatalogAPI, PaymentsAPI | PostgreSQL |
+| NotificationsLambda | DynamoDB |
 
-### Observabilidade — Opção B (Datadog APM)
-- **Datadog Agent 7.58** — DaemonSet no K8s que coleta traces (APM), métricas e logs de todos os containers
-- **Datadog .NET Tracer** (`Datadog.Trace.Bundle` NuGet) — auto-instrumentation de ASP.NET Core, EF Core, Npgsql, StackExchange.Redis, MassTransit/RabbitMQ, HttpClient, sem mudança de código
-- **Datadog Lambda Extension** — layer pública (`Datadog-Extension-ARM`) anexada à Lambda de Notificações para forwarding de traces, logs e métricas diretamente da AWS
-- **API Key** gerenciada via Kubernetes Secret (`datadog-secret`) e variável sensível do Terraform (`dd_api_key`)
-- Deploy K8s: `k8s/base/datadog-agent.yaml` (DaemonSet + ServiceAccount/RBAC + ConfigMap)
-- Cobertura dos 3 pilares: métricas (APM + runtime metrics), logs (`DD_LOGS_INJECTION=true` correlaciona trace_id/span_id), traces distribuídos (incluindo o fluxo "Compra de Jogo": API Gateway → CatalogAPI → RabbitMQ → PaymentsAPI → SQS → Lambda → DynamoDB)
+### Observabilidade — Datadog APM
+- Datadog Agent (DaemonSet K8s / container Compose) + .NET Tracer + Lambda Extension
+- 3 pilares cobertos: métricas, logs (com `dd.trace_id` injetado), traces distribuídos
+- Toda configuração em `k8s/base/datadog-agent.yaml` e `infrastructure/terraform/datadog.tf`
 
 ---
 
-## Fluxos de Eventos
+## Como testar a aplicação
 
-### 1. Cadastro de Usuário
+Todos os exemplos usam o entrypoint do **Kong** local (`http://localhost:8080`), que é a mesma forma usada em produção via AWS API Gateway.
 
-```mermaid
-sequenceDiagram
-    actor Cliente
-    participant GW as API Gateway
-    participant UA as UsersAPI
-    participant DB1 as PostgreSQL (users_db)
-    participant SQS as SQS (UserCreated)
-    participant L as Lambda (Notifications)
-    participant DDB as DynamoDB
-
-    Cliente->>GW: POST /api/users (sem JWT)
-    GW->>UA: proxy
-    UA->>DB1: INSERT User (Argon2id)
-    UA->>SQS: publica UserCreatedEvent
-    UA-->>GW: 201 Created
-    GW-->>Cliente: 201 Created
-    SQS->>L: trigger (EventSourceMapping)
-    L->>DDB: INSERT notification log
-    L->>L: loga e-mail de boas-vindas
-```
-
-### 2. Compra de Jogo (fluxo completo)
-
-```mermaid
-sequenceDiagram
-    actor Cliente
-    participant GW as API Gateway
-    participant CA as CatalogAPI
-    participant DB2 as PostgreSQL (catalog_db)
-    participant RMQ as RabbitMQ / SQS
-    participant PA as PaymentsAPI
-    participant SQS as SQS (PaymentProcessed)
-    participant L as Lambda (Notifications)
-    participant DDB as DynamoDB
-
-    Cliente->>GW: POST /api/games/purchase (Bearer JWT)
-    GW->>CA: proxy (JWT validado pelo middleware [Authorize] da CatalogAPI)
-    CA->>DB2: valida jogo + licença
-    CA->>RMQ: publica OrderPlacedEvent
-    CA-->>GW: 202 Accepted
-    GW-->>Cliente: 202 Accepted
-
-    RMQ->>PA: entrega OrderPlacedEvent
-    PA->>PA: simula pagamento (90% Approved)
-    PA->>SQS: publica PaymentProcessedEvent
-
-    SQS->>L: trigger
-    L->>DDB: INSERT notification log
-    L->>L: loga e-mail de confirmação
-```
-
----
-
-## Executando com Docker Compose
-
-### Pré-requisitos
-- Docker Desktop com Compose
-
-### Iniciar todos os serviços
+### 1. Smoke test — gateway está validando JWT?
 
 ```bash
-cp .env.example .env   # edite as variáveis (inclui DD_API_KEY e DD_SITE)
-
-# Gere o par de chaves RSA (assinatura de JWTs) — segue o output do script
-# adicionando JWT_RSA_PRIVATE_KEY e JWT_RSA_PUBLIC_KEY ao seu .env
-bash infrastructure/scripts/generate-jwt-keys.sh
-
-# Empacote a NotificationsLambda — necessário para o fluxo SQS → Lambda → DynamoDB
-bash infrastructure/localstack/build-lambda.sh
-# Windows: pwsh infrastructure/localstack/build-lambda.ps1
-
-docker compose up --build
+curl -i http://localhost:8080/api/games        # → 401 Unauthorized (sem token)
+curl -i http://localhost:8080/.well-known/jwks.json  # → 200 OK (público)
 ```
 
-> **AWS local com LocalStack**: o `docker-compose.yml` sobe um container
-> `localstack` que emula SQS, DynamoDB, Lambda, S3 e CloudWatch Logs. O script
-> `infrastructure/localstack/init-aws.sh` cria automaticamente filas + DLQs
-> (`fcg-local-user-created-events`, `fcg-local-payment-processed-events`),
-> a tabela DynamoDB `fcg-local-notifications`, o bucket de deploy e a função
-> Lambda com event source mappings nas duas filas — reproduzindo o fluxo de
-> produção sem custo em nuvem.
-
-> **Datadog local**: o `datadog-agent` só sobe corretamente com uma `DD_API_KEY` válida.
-> Se quiser rodar sem Datadog, comente o serviço `datadog-agent` no `docker-compose.yml`
-> e remova as envs `DD_*` dos 3 microsserviços.
-
-### URLs disponíveis
-
-| Serviço | URL |
-|---------|-----|
-| UsersAPI (Swagger) | http://localhost:5001/swagger |
-| CatalogAPI (Swagger) | http://localhost:5002/swagger |
-| PaymentsAPI (health) | http://localhost:5003/health |
-| RabbitMQ Management | http://localhost:15672 |
-| Redis | localhost:6379 |
-| users-postgres | localhost:5432 |
-| catalog-postgres | localhost:5433 |
-| payments-postgres | localhost:5434 |
-| LocalStack (edge) | http://localhost:4566 |
-| **API Gateway (Nginx)** | **http://localhost:8080** — entrypoint único |
-
-> **NotificationsAPI** — em produção roda como AWS Lambda gerenciada (provisionada
-> pelo Terraform). Em desenvolvimento (Compose), o LocalStack hospeda a mesma
-> função `.NET 8` lida do `.zip` gerado por
-> `infrastructure/localstack/build-lambda.sh`, com event source mappings reais
-> nas filas SQS — fluxo end-to-end sem dependência de cloud.
-
-### Acesso às APIs em dev
-
-Em produção o entrypoint é o **AWS API Gateway HTTP API v2** provisionado
-pelo Terraform. Como HTTP API v2 não é emulado no LocalStack Community
-(é Pro), em dev usamos **Nginx** como proxy reverso reproduzindo as
-mesmas rotas, CORS e throttling do gateway real. O entrypoint local é:
-
-```
-http://localhost:8080
-```
+### 2. Cadastrar usuário (público)
 
 ```bash
-# Cadastro de usuário (mesmo path do gateway de produção)
 curl -X POST http://localhost:8080/api/users \
   -H "Content-Type: application/json" \
   -d '{"name":"Demo","email":"demo@fgc.com","password":"Demo@123"}'
-
-# Catálogo de jogos
-curl http://localhost:8080/api/games
-
-# Health do gateway
-curl http://localhost:8080/health
 ```
 
-Acessar as portas individuais (`5001`/`5002`/`5003`) continua funcionando
-para debug pontual, mas o caminho recomendado é via `8080` — que é o
-mesmo padrão de produção (uma URL, vários microsserviços abstraídos).
+### 3. Login e captura do token
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8080/api/users/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@fgc.com","password":"Admin@123"}' | jq -r .token)
+echo "$TOKEN"
+```
+
+> **Credencial seed:** `admin@fgc.com` / `Admin@123` (role `Admin`) — criado automaticamente pela UsersAPI no startup.
+
+> **Validade do token:** 15 minutos (configurável via env `Jwt__ExpirationMinutes`).
+
+### 4. Listar e criar jogos (autenticado)
+
+```bash
+# GET — qualquer usuário autenticado
+curl http://localhost:8080/api/games -H "Authorization: Bearer $TOKEN"
+
+# POST — só Admin
+curl -X POST http://localhost:8080/api/games \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Stellar Odyssey","description":"Space RPG","price":59.90}'
+```
+
+### 5. Fluxo de compra (assíncrono, dispara Lambda)
+
+```bash
+# Listar jogos para pegar um gameId
+GAME_ID=$(curl -s http://localhost:8080/api/games -H "Authorization: Bearer $TOKEN" | jq -r '.[0].id')
+
+# Disparar compra — responde 202 Accepted, processamento é async via RabbitMQ → SQS → Lambda
+curl -X POST http://localhost:8080/api/games/purchase \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"gameId\":\"$GAME_ID\"}"
+
+# Após ~5s, ver a notificação registrada no DynamoDB (via LocalStack)
+docker exec fcg-localstack awslocal dynamodb scan \
+  --table-name fcg-local-notifications --query 'Items[*].message.S'
+
+# Logs da Lambda
+docker exec fcg-localstack awslocal logs filter-log-events \
+  --log-group-name /aws/lambda/fcg-local-notifications --limit 20 \
+  --query 'events[].message' --output text
+```
+
+### 6. Swagger UI
+
+http://localhost:8080/swagger/ — spec único curado descrevendo só o contrato exposto pelo gateway (sem detalhes internos).
+
+### Outras URLs úteis
+
+| URL | Uso |
+|---|---|
+| http://localhost:8080 | **Entrypoint Kong** (use este!) |
+| http://localhost:5001/swagger | UsersAPI direta (debug) |
+| http://localhost:5002/swagger | CatalogAPI direta (debug) |
+| http://localhost:5003/health | PaymentsAPI direta (debug) |
+| http://localhost:15672 | RabbitMQ Management (`$RABBITMQ_USER` / `$RABBITMQ_PASSWORD`) |
+| http://localhost:4566 | LocalStack edge port |
 
 ### Inspecionar recursos AWS locais
 
 ```bash
-# Listar filas
 docker exec fcg-localstack awslocal sqs list-queues
-
-# Espiar mensagens na fila de cadastro
 docker exec fcg-localstack awslocal sqs receive-message \
   --queue-url http://localhost:4566/000000000000/fcg-local-user-created-events
-
-# Ler notificações persistidas
-docker exec fcg-localstack awslocal dynamodb scan \
-  --table-name fcg-local-notifications
-
-# Bucket de deploy da Lambda
-docker exec fcg-localstack awslocal s3 ls s3://fcg-local-lambda-deploy
-
-# Logs da Lambda
-docker exec fcg-localstack awslocal logs describe-log-groups
-docker exec fcg-localstack awslocal logs filter-log-events \
-  --log-group-name /aws/lambda/fcg-local-notifications \
-  --limit 50 --query 'events[].message' --output text
+docker exec fcg-localstack awslocal dynamodb scan --table-name fcg-local-notifications
 ```
-
-### Cobertura AWS ↔ LocalStack
-
-| Recurso AWS (Terraform) | Em LocalStack? | Substituto local |
-|---|---|---|
-| `aws_sqs_queue` (filas + DLQs) | ✅ emulado |  |
-| `aws_dynamodb_table` | ✅ emulado |  |
-| `aws_lambda_function` | ✅ Compose (LocalStack) · AWS gerenciado em produção | — |
-| `aws_lambda_event_source_mapping` | ✅ Compose (LocalStack) · AWS gerenciado em produção | — |
-| `aws_apigatewayv2_api` + rotas | ⚠️ **LocalStack Pro only** (HTTP API v2) | **Nginx** em `http://localhost:8080` reproduzindo as mesmas rotas, CORS e throttling — `infrastructure/nginx/nginx.conf` |
-| `aws_s3_bucket` (lambda deploy) | ✅ emulado |  |
-| `aws_cloudwatch_log_group` | ✅ emulado |  |
-| `aws_iam_role` / policy | ✅ aceito (não enforced em local) |  |
-| `aws_ecs_cluster` / `aws_ecs_service` | ❌ requer LocalStack Pro | Containers do Compose / Pods do K8s |
-| `aws_instance` (EC2) | ❌ não emulável de forma útil | Containers / Pods |
-| `aws_ebs_volume` / `aws_eip` / `aws_security_group` | ❌ irrelevante em local | Volumes Docker / networking nativo |
-| `aws_ecr_repository` | ❌ desnecessário | `docker build` direto na imagem `:latest` |
-
-A coluna **"Substituto local"** mostra como o item é coberto sem AWS: as APIs que rodariam em ECS/EC2 viram containers no Compose ou pods no K8s, mantendo o mesmo comportamento de aplicação (porque a imagem do app é a mesma — só o orquestrador muda).
-
-### Autenticação JWT (RSA RS256)
-
-A UsersAPI emite tokens JWT assinados com **RSA** (algoritmo `RS256`),
-permitindo que o **AWS API Gateway HTTP API v2 JWT Authorizer nativo** valide
-os tokens em produção sem precisar de Lambda authorizer. A chave pública é
-publicada pela UsersAPI no endpoint padrão OIDC.
-
-| Endpoint | Função |
-|---|---|
-| `/.well-known/jwks.json` | Chave pública em formato JWK (`kid: fcg-rsa-1`) |
-| `/.well-known/openid-configuration` | Metadata OIDC (issuer + jwks_uri + algs) |
-
-**Gerar as chaves localmente** (antes da primeira subida do Compose ou Terraform):
-
-```bash
-bash infrastructure/scripts/generate-jwt-keys.sh
-```
-
-O script gera o par em `.keys/private.pem` + `.keys/public.pem` (gitignored)
-e imprime as variáveis prontas para o `.env`:
-```
-JWT_RSA_PRIVATE_KEY=<base64 do PEM da chave privada>
-JWT_RSA_PUBLIC_KEY=<base64 do PEM da chave pública>
-```
-
-**Distribuição de chaves** por ambiente:
-
-| Serviço | Chave privada | Chave pública |
-|---|---|---|
-| UsersAPI | ✅ (para assinar tokens + servir o JWKS) | ✅ |
-| CatalogAPI | — | ✅ (validar tokens) |
-| PaymentsAPI | — | ✅ (validar tokens) |
-| AWS API Gateway | — | Busca via JWKS endpoint dinamicamente |
-
-> O AWS API Gateway só suporta JWT Authorizer com algoritmos RSA/ECDSA
-> (HMAC `HS256` não é aceito). Por isso a escolha por RSA.
-
-### Credenciais de teste (seed automático)
-
-Na primeira subida, a UsersAPI cria automaticamente o usuário admin via
-`UsersDbSeeder` (Clean Architecture — `Users.Infrastructure/Persistence/Seed/`).
-A criação é idempotente.
-
-| E-mail | Senha | Role |
-|--------|-------|------|
-| `admin@fgc.com` | `Admin@123` | Admin |
-
-Outros usuários podem ser cadastrados via `POST /api/users`.
 
 ---
 
-## Deploy no Kubernetes
+## Deploy no Kubernetes local
 
-Os manifests são gerenciados via **Kustomize** (nativo no `kubectl`):
-um único `k8s/base/` é compartilhado entre ambientes, e cada `overlay`
-injeta o que é específico do ambiente (LocalStack em dev, URLs reais
-do Terraform em prod).
+Roda a mesma stack do Compose dentro de um cluster Kubernetes — UsersAPI + CatalogAPI + PaymentsAPI atrás do Kong, com Postgres, Redis, RabbitMQ e LocalStack (SQS/DynamoDB/S3) dentro do cluster.
 
-### Estrutura
+> **Limitação conhecida:** a NotificationsLambda **não roda no K8s** (LocalStack não consegue emular Lambda dentro de cluster por causa de container-in-container). Para validar o fluxo SQS → Lambda → DynamoDB end-to-end, use Docker Compose. No K8s as filas SQS são criadas e populadas normalmente — só o consumer Lambda fica off.
 
-```
-k8s/
-├── base/                              # Manifests comuns (todos os ambientes)
-│   ├── kustomization.yaml             # Lista resources + configMapGenerator
-│   ├── namespace.yaml
-│   ├── network-policies.yaml
-│   ├── users-postgres.yaml + secret
-│   ├── catalog-postgres.yaml
-│   ├── payments-postgres.yaml
-│   ├── postgres-secrets.yaml
-│   ├── rabbitmq.yaml + secret
-│   ├── redis.yaml + secret
-│   ├── users-api.yaml + secret       # Service em :8080
-│   ├── catalog-api.yaml + secret
-│   ├── payments-api.yaml + secret
-│   ├── api-gateway.yaml              # Nginx — entrypoint único em :8080
-│   ├── swagger-ui.yaml               # Swagger UI carregando spec curado
-│   ├── ingress.yaml
-│   ├── datadog-agent.yaml + secret   # DaemonSet + RBAC + checks customizados
-│   └── bootstrap.sh / kind-config.yaml
-└── overlays/
-    ├── local/                         # Cluster local (Docker Desktop / kind / minikube)
-    │   ├── kustomization.yaml
-    │   ├── localstack.yaml           # LocalStack (SQS + DynamoDB + S3 + Logs)
-    │   └── sqs-secrets.yaml          # Endpoints AWS apontam para o LocalStack do cluster
-    └── prod/                          # EKS (recursos reais via Terraform)
-        ├── kustomization.yaml
-        └── sqs-secrets.yaml.example  # Template com placeholders dos outputs Terraform
-```
+### Pré-requisitos
 
-ConfigMaps de `nginx-config` (nginx.conf + openapi.yaml) e `datadog-checks`
-(redisdb.yaml + disk.yaml) são gerados pelo `configMapGenerator` do
-`base/kustomization.yaml` reaproveitando os arquivos em `infrastructure/`
-— mesma fonte da verdade do Compose, zero duplicação.
+- **Cluster K8s local** — use uma das opções:
+  - [`kind`](https://kind.sigs.k8s.io/) (recomendado — config pronta em `k8s/kind-config.yaml`)
+  - `minikube`
+  - Kubernetes do Docker Desktop (Settings → Kubernetes → Enable)
+- `kubectl` no PATH
+- Docker (para buildar as imagens das APIs)
 
-### Deploy em cluster local (com LocalStack)
+### Passo 1 — criar o cluster (kind)
 
 ```bash
-# 1. Imagens dos serviços + imagem do LocalStack
-docker build -t fcg-localstack:local infrastructure/localstack/
+kind create cluster --name fcg --config k8s/kind-config.yaml
+kubectl config use-context kind-fcg
+kubectl get nodes                  # deve mostrar o node fcg-control-plane Ready
+```
+
+> Pulando: se você já usa Docker Desktop K8s ou minikube, só garanta que o contexto correto está ativo com `kubectl config current-context`.
+
+### Passo 2 — buildar as imagens locais
+
+```bash
+# A partir de Orchestration/
 docker build -t users-api:latest    ../UsersAPI
 docker build -t catalog-api:latest  ../CatalogAPI
 docker build -t payments-api:latest ../PaymentsAPI
+docker build -t fcg-localstack:local infrastructure/localstack/
 
-# 2. Secrets de aplicação (copie cada *-secret.yaml.example pra *-secret.yaml
-#    e preencha os valores)
+# Empacotar a Lambda (mesmo que o K8s não rode, o LocalStack tenta carregar
+# o .zip no startup — sem ele o init falha)
+bash infrastructure/localstack/build-lambda.sh   # Windows: pwsh build-lambda.ps1
+```
 
-# 3. Deploy — a flag --load-restrictor permite o configMapGenerator do base
-#    ler nginx.conf/openapi.yaml/datadog-checks de infrastructure/ (DRY)
+**Carregar as imagens no cluster:**
+
+```bash
+# kind — única opção que precisa do load explícito
+kind load docker-image users-api:latest catalog-api:latest payments-api:latest \
+                       fcg-localstack:local --name fcg
+
+# minikube
+minikube image load users-api:latest && minikube image load catalog-api:latest && \
+minikube image load payments-api:latest && minikube image load fcg-localstack:local
+
+# Docker Desktop K8s — não precisa, já compartilha o daemon
+```
+
+### Passo 3 — preparar os secrets
+
+```bash
+# Gerar par RSA (mesmo do .env do Compose — pode reutilizar se já gerou)
+bash infrastructure/scripts/generate-jwt-keys.sh
+
+# Copiar cada template e editar com os valores reais
+for f in postgres-secrets rabbitmq-secret redis-secret datadog-secret \
+         users-api-secret catalog-api-secret payments-api-secret; do
+  cp "k8s/base/$f.yaml.example" "k8s/base/$f.yaml"
+done
+
+# Edite k8s/base/users-api-secret.yaml, catalog-api-secret.yaml e
+# payments-api-secret.yaml colando JWT_RSA_PUBLIC_KEY (base64) — UsersAPI
+# também precisa de JWT_RSA_PRIVATE_KEY.
+```
+
+### Passo 4 — escolher um caminho de deploy
+
+**Caminho A — Kustomize (declarativo, recomendado):**
+
+```bash
 kubectl apply -k k8s/overlays/local --load-restrictor=LoadRestrictionsNone
-
-# 4. Acesso via API Gateway (entrypoint único, espelha produção)
-kubectl port-forward svc/api-gateway 8080:8080 -n fcg
-#   → http://localhost:8080/swagger       (Swagger UI agregado)
-#   → http://localhost:8080/api/users     (UsersAPI por trás do gateway)
-#   → http://localhost:8080/api/games     (CatalogAPI por trás do gateway)
-
-# Acesso direto às APIs (debug)
-kubectl port-forward svc/users-api   5001:8080 -n fcg
-kubectl port-forward svc/catalog-api 5002:8080 -n fcg
-kubectl port-forward svc/localstack  4566:4566 -n fcg   # awslocal a partir do host
 ```
 
-> **Lambda em Kubernetes**: a função `NotificationsFunction` é serverless e
-> vive **fora do cluster**, provisionada na AWS via Terraform. O Kubernetes
-> orquestra apenas os microsserviços containerizados (UsersAPI, CatalogAPI,
-> PaymentsAPI); o fluxo SQS → Lambda → DynamoDB roda no plano gerenciado da
-> AWS, conforme a arquitetura de produção. Para validação funcional da
-> Lambda em desenvolvimento, utilize o ambiente Docker Compose, que emula
-> SQS, DynamoDB e Lambda localmente com LocalStack.
+A flag `--load-restrictor=LoadRestrictionsNone` é necessária porque o `configMapGenerator` do `base/` referencia arquivos em `infrastructure/kong/` (compartilhados com o Compose, fonte única de verdade).
 
-### Deploy em EKS (produção)
+**Caminho B — Script imperativo (`bootstrap.sh`):**
 
 ```bash
-# 1. Provisionar a infra AWS (SQS, DynamoDB, Lambda, ECR, etc.)
-cd infrastructure/terraform && bash deploy.sh && cd -
-
-# 2. Popular o Secret com queue URLs reais
-cp k8s/overlays/prod/sqs-secrets.yaml.example k8s/overlays/prod/sqs-secrets.yaml
-#   Edite e substitua os REPLACE_WITH_TERRAFORM_OUTPUT pelos valores de:
-#     terraform -chdir=infrastructure/terraform output
-
-# 3. Deploy do overlay prod
-kubectl apply -k k8s/overlays/prod --load-restrictor=LoadRestrictionsNone
+export DD_API_KEY=xxxxxxxxxxxx       # ou um valor dummy se não usar Datadog
+bash k8s/bootstrap.sh                # Windows: pwsh k8s/bootstrap.ps1
 ```
 
-> **Por que duas pastas?** A imagem dos serviços é a mesma em dev e prod —
-> só as env vars de AWS (queue URLs e endpoint) mudam. Os Deployments já
-> declaram `envFrom: secretRef: name: *-sqs (optional: true)` para esses
-> valores; cada overlay popula esses Secrets de jeitos diferentes.
+O bootstrap aplica secrets, manifests e ConfigMaps (`kong-config`, `kong-entrypoint`, `swagger-spec`) sem depender de Kustomize.
 
-### Verificar pods
+### Passo 5 — esperar os pods + expor o Kong
 
 ```bash
-kubectl get pods     -n fcg
-kubectl get services -n fcg
-# Dashboards de observabilidade ficam em https://app.datadoghq.com/
+kubectl get pods -n fcg -w
+# Aguarde até todos ficarem Running. UsersAPI/CatalogAPI/PaymentsAPI podem
+# levar ~30s no primeiro start (rodam migrations do Entity Framework).
+
+# Expor o Kong gateway em http://localhost:8080
+kubectl port-forward svc/api-gateway 8080:8000 -n fcg
 ```
+
+### Passo 6 — testar
+
+```bash
+# Smoke
+curl -i http://localhost:8080/api/games                # → 401 (sem token)
+curl -i http://localhost:8080/.well-known/jwks.json    # → 200
+
+# Login com a credencial seed
+TOKEN=$(curl -s -X POST http://localhost:8080/api/users/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@fgc.com","password":"Admin@123"}' | jq -r .token)
+
+curl http://localhost:8080/api/games -H "Authorization: Bearer $TOKEN"
+```
+
+Demais exemplos (criar jogo, fluxo de compra) na seção [Como testar a aplicação](#como-testar-a-aplicação) — funcionam igual via `http://localhost:8080`.
+
+### Acessos diretos (debug)
+
+```bash
+kubectl port-forward svc/users-api    5001:8080 -n fcg
+kubectl port-forward svc/catalog-api  5002:8080 -n fcg
+kubectl port-forward svc/payments-api 5003:8080 -n fcg
+kubectl port-forward svc/localstack   4566:4566 -n fcg
+
+# Logs
+kubectl logs -f -n fcg deploy/api-gateway
+kubectl logs -f -n fcg deploy/users-api
+```
+
+### Atualizar uma API após mudança de código
+
+```bash
+docker build -t users-api:latest ../UsersAPI
+kind load docker-image users-api:latest --name fcg          # se for kind
+kubectl rollout restart deploy/users-api -n fcg
+```
+
+### Cleanup
+
+```bash
+# Deletar só o namespace (mantém o cluster)
+kubectl delete namespace fcg
+
+# Ou destruir o cluster inteiro (kind)
+kind delete cluster --name fcg
+```
+
+### Estrutura do diretório `k8s/`
+
+```
+k8s/
+├── base/                          # manifests canônicos (Kustomize)
+│   ├── kustomization.yaml         # gera kong-config + swagger-spec + datadog-checks
+│   ├── namespace.yaml · network-policies.yaml
+│   ├── *-postgres.yaml + secrets · rabbitmq.yaml + secret · redis.yaml + secret
+│   ├── users-api.yaml · catalog-api.yaml · payments-api.yaml (+ secrets)
+│   ├── api-gateway.yaml           # Kong 3.7 (Deployment + Service + ConfigMap entrypoint)
+│   ├── swagger-ui.yaml            # mount do openapi.yaml via ConfigMap
+│   └── datadog-agent.yaml + secret
+├── overlays/
+│   ├── local/                     # base + LocalStack + sqs-secrets
+│   └── prod/                      # template — usa AWS gerenciado
+├── *.yaml                         # manifests equivalentes para bootstrap.sh
+├── bootstrap.sh / bootstrap.ps1   # caminho imperativo (sem Kustomize)
+└── kind-config.yaml               # config exemplo para o cluster kind
+```
+
+> **EKS na AWS não é usado** — em produção as APIs rodam em ECS sobre EC2 (Terraform). O cluster K8s só serve para dev local.
 
 ---
 
 ## Deploy AWS (Terraform)
 
-A infraestrutura AWS é gerenciada via **Terraform** em `infrastructure/terraform/`.
-A stack está modularizada por recurso: `api_gateway.tf`, `lambda.tf`, `sqs.tf`,
-`dynamodb.tf`, `ecs_tasks.tf`, `iam.tf`, `datadog.tf`, etc.
+Infraestrutura em `infrastructure/terraform/` — provider AWS + Datadog, modularizada por recurso.
 
 ### O que é provisionado
 
-| Recurso Terraform | Descrição |
-|-------------------|-----------|
-| `aws_apigatewayv2_api` + integrations + routes | API Gateway HTTP API v2 com CORS, throttling e roteamento HTTP_PROXY |
-| `aws_sqs_queue` | Filas `fcg-{env}-user-created-events` e `fcg-{env}-payment-processed-events` + DLQs |
-| `aws_lambda_function` | Lambda `fcg-{env}-notifications` (.NET 8 arm64) com Datadog Extension layer |
-| `aws_lambda_event_source_mapping` | Triggers SQS → Lambda para as duas filas |
-| `aws_dynamodb_table` | Tabela `fcg-{env}-notifications` (NoSQL) com GSI e TTL |
+| Recurso | Descrição |
+|---|---|
+| `aws_apigatewayv2_api` + routes + JWT authorizer | API Gateway HTTP API v2 com CORS, throttling e validação JWT |
+| `aws_ecs_cluster` + services | UsersAPI, CatalogAPI, PaymentsAPI rodando em ECS sobre EC2 |
+| `aws_ecr_repository` (×3) | Imagens das APIs |
+| `aws_sqs_queue` + DLQ (×2) | Filas `user-created-events` e `payment-processed-events` |
+| `aws_lambda_function` + event_source_mapping | NotificationsLambda + Datadog Extension |
+| `aws_dynamodb_table` | `fcg-{env}-notifications` (TTL + GSI) |
 | `aws_s3_bucket` | Bucket de deploy da Lambda |
-| `aws_ecr_repository` | Registries das imagens dos microsserviços |
-| `aws_ecs_cluster` / `aws_ecs_service` / `aws_instance` | Cluster ECS sobre EC2 que roda os pods das APIs |
-| `aws_iam_role` / policies | Roles com least privilege para Lambda, ECS e tasks |
-| `aws_cloudwatch_log_group` | Log group da Lambda (retenção 14 dias) |
-| `datadog_dashboard` / `datadog_monitor` | Dashboards e monitores configurados via provider Datadog |
+| `aws_iam_role` / policies | Least privilege para Lambda + ECS |
+| `datadog_dashboard` / `datadog_monitor` | Dashboards e monitores |
 
-### Pré-requisitos
-
-```bash
-# AWS CLI configurado
-aws configure
-
-# Terraform >= 1.6
-terraform --version
-
-# .NET 8 SDK (build da Lambda durante o deploy)
-dotnet --version  # >= 8.0
-```
-
-### Deploy
+### Deploy completo
 
 ```bash
 cd infrastructure/terraform
 
-# Variáveis (também aceitas como env vars: TF_VAR_<nome>)
-cp terraform.tfvars.example terraform.tfvars   # preencha os valores
+cp terraform.tfvars.example terraform.tfvars
+# preencha: jwt_rsa_private_key, jwt_rsa_public_key, db_password,
+#          rmq_password, dd_api_key, etc.
 
-# Gere o par RSA antes (se ainda não tiver) — popula terraform.tfvars
-bash ../scripts/generate-jwt-keys.sh
-
-# Opção 1 — Script automatizado (faz dotnet publish da Lambda + terraform apply)
-export ENVIRONMENT=production
-export USERS_API_URL=https://seu-lb.amazonaws.com
-export CATALOG_API_URL=https://seu-lb.amazonaws.com
+# Script automatizado — faz dotnet publish da Lambda + terraform apply
+export DD_API_KEY=xxxxxxxxxxxx
 export AWS_REGION=us-east-1
-export DD_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-export DD_SITE=us5.datadoghq.com
-bash deploy.sh
-
-# Opção 2 — Terraform direto
-terraform init
-terraform plan
-terraform apply
+bash deploy.sh                # Windows: pwsh deploy.ps1
 ```
 
-### Após o deploy
-
-Os outputs do Terraform expõem o que os serviços precisam:
+### Deploy só do API Gateway / ECS task def (após mudança de env var)
 
 ```bash
-terraform output                       # lista tudo
-terraform output -raw api_gateway_url  # entrypoint público do sistema
-terraform output -raw sqs_user_created_queue_url
-terraform output -raw sqs_payment_processed_queue_url
+# Quando muda só task def da UsersAPI (ex: env var nova)
+terraform apply \
+  -target=aws_ecs_task_definition.users_api \
+  -target=aws_ecs_service.users_api
+
+# Quando muda código (rebuild + push da imagem)
+aws ecr get-login-password --region us-east-1 | docker login --username AWS \
+  --password-stdin <accountId>.dkr.ecr.us-east-1.amazonaws.com
+docker build -t <accountId>.dkr.ecr.us-east-1.amazonaws.com/users-api:latest ../../UsersAPI
+docker push <accountId>.dkr.ecr.us-east-1.amazonaws.com/users-api:latest
+aws ecs update-service --cluster fcg-production-cluster \
+  --service fcg-production-users-api --force-new-deployment
 ```
 
-Esses valores alimentam o Secret `users-api-sqs` / `payments-api-sqs` do
-overlay K8s de produção (ver `k8s/overlays/prod/sqs-secrets.yaml.example`).
+### Outputs úteis
+
+```bash
+terraform output -raw api_gateway_url               # entrypoint público
+terraform output -raw users_api_url                 # acesso direto (debug)
+terraform output -raw user_created_queue_url        # input para users-api
+terraform output -raw payment_processed_queue_url   # input para payments-api
+```
 
 ---
 
 ## Observabilidade — Datadog APM
 
-### Stack escolhida: Opção B — APM gerenciado
-
+### Stack
 | Componente | Função |
-|------------|--------|
-| **Datadog Agent 7.58** (DaemonSet K8s) | Recebe traces APM (porta 8126/tcp) e métricas DogStatsD (8125/udp), coleta logs de containers via autodiscovery |
-| **Datadog .NET Tracer** (`Datadog.Trace.Bundle`) | Auto-instrumentation de ASP.NET Core, EF Core, Npgsql, StackExchange.Redis, MassTransit, HttpClient — zero mudança de código |
-| **Datadog Lambda Extension** (layer ARM64) | Envia traces, logs e métricas diretamente da Lambda para o Datadog |
+|---|---|
+| Datadog Agent 7.58 (DaemonSet/container) | Recebe traces APM (8126), DogStatsD (8125), coleta logs por autodiscovery |
+| Datadog .NET Tracer (`Datadog.Trace.Bundle`) | Auto-instrumentation: ASP.NET Core, EF Core, Npgsql, Redis, MassTransit, HttpClient |
+| Datadog Lambda Extension (layer ARM64) | Envia traces/logs/métricas direto da Lambda (sem CloudWatch) |
 
-### Os três pilares da observabilidade
+### API key — onde configurar
 
-**1. Métricas** — APM automático (`trace.aspnet_core.request`, `trace.npgsql.command`), runtime .NET (`runtime.dotnet.*`), dashboards APM built-in:
-- RPS / throughput por serviço
-- Latência P50/P95/P99 por endpoint
-- Taxa de erros (4xx / 5xx)
-- Resource utilization por rota
-- JIT, GC pauses, thread pool
+| Ambiente | Onde |
+|---|---|
+| Docker Compose | `.env` — `DD_API_KEY=` e `DD_SITE=` (ex.: `us5.datadoghq.com`) |
+| Kubernetes | `cp k8s/base/datadog-secret.yaml.example k8s/base/datadog-secret.yaml` + edite |
+| AWS Lambda | `export TF_VAR_dd_api_key=...` antes do `terraform apply` |
 
-**2. Logs** — Serilog → stdout → Datadog Agent coleta via autodiscovery de containers. `DD_LOGS_INJECTION=true` injeta `dd.trace_id` e `dd.span_id` em todas as entradas via `LogContext`, permitindo correlacionar log → trace com um clique. A Lambda envia logs via Extension sem passar pelo CloudWatch.
+Para rodar **sem Datadog** localmente, comente o serviço `datadog-agent` no `docker-compose.yml` e remova as envs `DD_*` das APIs.
 
-**3. Traces distribuídos** — Captura o fluxo "Compra de Jogo" completo:
-```
-API Gateway → CatalogAPI (HTTP) → RabbitMQ (span producer)
-            → PaymentsAPI (consume) → SQS (span producer)
-            → Lambda Notifications → DynamoDB (span db)
-```
-Visível em **APM → Traces → Service Map** do Datadog.
+### Dashboards
+- https://app.\<seu-site\>.datadoghq.com/
+- APM → Services: `users-api`, `catalog-api`, `payments-api`, `fcg-local-notifications`
+- APM → Service Map: topologia completa (Postgres, Redis, RabbitMQ, SQS, DynamoDB)
+- Trace de compra: `service:catalog-api resource_name:POST /api/games/purchase`
 
-### Pré-requisitos — API key
+---
 
-Obtenha a API key em https://app.datadoghq.com/organization-settings/api-keys e configure:
+## Taskfile — referência das tasks
 
-> **Atenção ao `DD_SITE`**: o valor depende do datacenter da sua conta
-> Datadog — `datadoghq.com` (US1), `us5.datadoghq.com` (US5),
-> `datadoghq.eu` (EU). Use o que estiver na URL do seu painel.
+`task` (go-task) é o orquestrador. Todas as tasks são definidas em `Taskfile.yml`, idempotentes, e listáveis com `task --list-all`.
 
-**Desenvolvimento local (Docker Compose)**
-```bash
-# .env
-DD_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-DD_SITE=us5.datadoghq.com    # ajuste conforme seu datacenter
-```
+### Setup (one-shot, idempotente)
 
-**Kubernetes** — copie o template e popule:
-```bash
-cp k8s/base/datadog-secret.yaml.example k8s/base/datadog-secret.yaml
-# Edite e cole a API key. Depois aplique o overlay normal:
-kubectl apply -k k8s/overlays/local --load-restrictor=LoadRestrictionsNone
-```
+| Task | Descrição |
+|---|---|
+| `task init` | Roda init:env + init:keys + init:lambda (skip do que já está pronto) |
+| `task init:env` | `cp .env.example .env` se não existir |
+| `task init:keys` | Gera par RSA e injeta `JWT_RSA_*` no `.env` (skip se já preenchido) |
+| `task init:lambda` | Empacota NotificationsLambda; reroda só se `.cs` mudou |
 
-**AWS Lambda** — a chave é passada como `TF_VAR_dd_api_key` ao Terraform:
-```bash
-export DD_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-export DD_SITE=us5.datadoghq.com
-bash infrastructure/terraform/deploy.sh
-```
+### Dev local (Compose)
 
-### Acesso aos dashboards
+| Task | Descrição |
+|---|---|
+| `task up` | Sobe a stack inteira (com init automático antes) |
+| `task watch` | Hot-reload — rebuild automático ao editar código das APIs |
+| `task ps` / `task logs svc=…` | Status / tail de logs |
+| `task rebuild svc=…` | Rebuild + recreate de um serviço (`users-api`, `catalog-api`, `payments-api`) |
+| `task restart svc=…` / `task shell svc=…` | Restart simples / shell num container |
+| `task test` | Smoke test (10 checagens contra http://localhost:8080) |
+| `task down` / `task clean` | Para containers / fresh start (remove volumes + .keys + lambda zip) |
 
-Toda a observabilidade fica em **https://app.\<seu-site\>.datadoghq.com/**
-(`us5.datadoghq.com` para US5, `datadoghq.com` para US1, etc.):
-- APM → Services: `users-api`, `catalog-api`, `payments-api`,
-  `fcg-local-notifications` (dev) ou `fcg-{env}-notifications` (prod)
-- APM → Traces: filtro `service:catalog-api resource_name:POST /api/games/purchase` para achar o trace da compra
-- APM → Service Map: mostra topologia e dependências (Postgres, Redis, RabbitMQ, SQS, DynamoDB)
-- Logs: query `service:catalog-api env:development` (ou `production`)
-- Dashboards → New → "APM Service Overview" (template pronto)
+### Kubernetes local (kind)
 
-> **Nota**: os logs da Lambda em produção **não passam mais por CloudWatch** — vão direto para o Datadog via Extension. O log group `/aws/lambda/fcg-*-notifications` é mantido apenas para auditoria básica.
+| Task | Descrição |
+|---|---|
+| `task k8s:up` | Cluster kind + build/load imagens + secrets do .env + apply Kustomize |
+| `task k8s:cluster` | Cria cluster kind 'fcg' (skip se existe) |
+| `task k8s:images` | Build das 4 imagens + `kind load` |
+| `task k8s:secrets` | Cria os 7 Secrets do namespace a partir do `.env` |
+| `task k8s:forward` | Port-forward do Kong em `:8080` |
+| `task k8s:rollout svc=…` | Rebuild + load + rollout restart de uma API |
+| `task k8s:pods` / `task k8s:logs app=…` | Status / logs |
+| `task k8s:down` / `task k8s:nuke` | Remove namespace / destrói cluster |
+
+### AWS — dia-a-dia de produção
+
+| Task | Descrição |
+|---|---|
+| `task aws:deploy svc=users-api` | ECR login + build + push + ECS force-new-deployment + wait stable |
+| `task aws:status` | Tabela com desiredCount/runningCount dos 3 services ECS |
+| `task aws:logs svc=…` | `aws logs tail` do CloudWatch group da API |
+| `task aws:url` | Imprime o URL do API Gateway |
+| `task aws:plan -- -target=…` | `terraform plan` com argumentos passados |
+| `task aws:terraform -- -target=…` | `terraform apply` com argumentos passados |
+| `task test:aws` | Smoke test contra a URL real do API Gateway AWS |
+
+### Scripts (chamados pelas tasks, mas podem rodar diretos)
+
+| Script | Quando usar diretamente |
+|---|---|
+| `infrastructure/scripts/generate-jwt-keys.sh [--inject-env] [--force]` | Regerar chaves RSA |
+| `infrastructure/scripts/k8s-secrets-from-env.sh` | Reaplicar secrets k8s após mudar `.env` |
+| `infrastructure/scripts/smoke-test.sh <URL>` | Testar qualquer endpoint do gateway |
+| `infrastructure/localstack/build-lambda.{sh,ps1}` | Recompilar Lambda manualmente |
+| `infrastructure/localstack/init-aws.sh` | (auto — init do container LocalStack) |
+| `infrastructure/kong/entrypoint.sh` | (auto — entrypoint do Kong) |
+| `infrastructure/terraform/deploy.{sh,ps1}` | Deploy AWS completo (Lambda + Terraform) |
+| `k8s/bootstrap.{sh,ps1}` | Deploy K8s imperativo (alternativa ao `task k8s:up`) |
 
 ---
 
 ## Contratos de Eventos
 
 | Evento | Produtor | Consumidores |
-|--------|----------|--------------|
-| `UserCreatedEvent` | UsersAPI | Lambda (SQS) |
-| `OrderPlacedEvent` | CatalogAPI | PaymentsAPI |
-| `PaymentProcessedEvent` | PaymentsAPI | CatalogAPI, Lambda (SQS) |
-
-```
-UserCreatedEvent(UserId, Name, Email)
-OrderPlacedEvent(OrderId, UserId, UserEmail, GameId, GameName, Price)
-PaymentProcessedEvent(OrderId, UserId, UserEmail, GameId, GameName, Price, Status)
-```
+|---|---|---|
+| `UserCreatedEvent(UserId, Name, Email)` | UsersAPI | Lambda (via SQS) |
+| `OrderPlacedEvent(OrderId, UserId, UserEmail, GameId, GameName, Price)` | CatalogAPI | PaymentsAPI (via RabbitMQ/SQS) |
+| `PaymentProcessedEvent(OrderId, UserId, …, Status)` | PaymentsAPI | CatalogAPI, Lambda (via SQS) |
 
 ---
 
-## Repositórios dos Microsserviços
+## Repositórios dos microsserviços
 
 | Serviço | Repositório |
-|---------|-------------|
+|---|---|
 | UsersAPI | [heroshg/UsersAPI](https://github.com/heroshg/UsersAPI) |
 | CatalogAPI | [heroshg/CatalogAPI](https://github.com/heroshg/CatalogAPI) |
 | PaymentsAPI | [heroshg/PaymentsAPI](https://github.com/heroshg/PaymentsAPI) |
-| NotificationsAPI (Lambda) | [heroshg/NotificationsAPI](https://github.com/heroshg/NotificationsAPI) |
+| NotificationsLambda | [heroshg/NotificationsAPI](https://github.com/heroshg/NotificationsAPI) |

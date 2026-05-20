@@ -21,15 +21,6 @@ Write-Host "  SQS Pay : $(if ($SqsPaymentProcessedQueueUrl) { $SqsPaymentProcess
 Write-Host "=================================================================" -ForegroundColor White
 Write-Host ""
 
-Info "Instalando nginx ingress controller..."
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/cloud/deploy.yaml
-Info "Aguardando nginx ingress controller ficar pronto (max 120s)..."
-kubectl wait --namespace ingress-nginx `
-    --for=condition=ready pod `
-    --selector=app.kubernetes.io/component=controller `
-    --timeout=120s
-Success "nginx ingress controller pronto"
-
 Info "Criando namespace..."
 kubectl apply -f "$ScriptDir\namespace.yaml"
 Success "Namespace 'fcg' pronto"
@@ -93,9 +84,22 @@ kubectl apply -f "$ScriptDir\catalog-api.yaml"
 kubectl apply -f "$ScriptDir\payments-api.yaml"
 Success "APIs deployadas"
 
-Info "Deployando Ingress..."
-kubectl apply -f "$ScriptDir\ingress.yaml"
-Success "Ingress fcg-ingress criado"
+Info "Criando ConfigMaps do Kong (gateway) e Swagger..."
+kubectl create configmap kong-config `
+    --from-file=kong.yml="$ScriptDir\..\infrastructure\kong\kong.yml" `
+    --namespace fcg --dry-run=client -o yaml | kubectl apply -f -
+kubectl create configmap kong-entrypoint `
+    --from-file=entrypoint.sh="$ScriptDir\..\infrastructure\kong\entrypoint.sh" `
+    --namespace fcg --dry-run=client -o yaml | kubectl apply -f -
+kubectl create configmap swagger-spec `
+    --from-file=openapi.yaml="$ScriptDir\..\infrastructure\kong\openapi.yaml" `
+    --namespace fcg --dry-run=client -o yaml | kubectl apply -f -
+Success "ConfigMaps do gateway criados"
+
+Info "Deployando Swagger UI + Kong API Gateway..."
+kubectl apply -f "$ScriptDir\swagger-ui.yaml"
+kubectl apply -f "$ScriptDir\api-gateway.yaml"
+Success "Kong + Swagger UI deployados"
 
 Write-Host ""
 Info "Aguardando pods ficarem prontos (max 180s)..."
@@ -110,5 +114,6 @@ kubectl get pods -n fcg
 Write-Host ""
 Write-Host "Proximos passos:" -ForegroundColor White
 Write-Host "  1. Verifique os pods acima — todos devem estar Running"
-Write-Host "  2. O ingress esta disponivel em: http://localhost"
-Write-Host "  3. Atualize o Terraform com as URLs e rode deploy.ps1"
+Write-Host "  2. Exponha o Kong gateway localmente:"
+Write-Host "     kubectl port-forward svc/api-gateway 8080:8000 -n fcg"
+Write-Host "  3. Acesse: http://localhost:8080/swagger/"

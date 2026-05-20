@@ -168,6 +168,9 @@ services:
       URL: /swagger/openapi.yaml
       LAYOUT: BaseLayout
       DEEP_LINKING: "true"
+    volumes:
+      # Spec servido pelo próprio swagger-ui (nginx interno) em /swagger/openapi.yaml
+      - ./infrastructure/kong/openapi.yaml:/usr/share/nginx/html/swagger/openapi.yaml:ro
     networks:
       - messaging
     security_opt:
@@ -178,29 +181,46 @@ services:
           memory: 128m
           cpus: "0.25"
 
+  # ─── API Gateway local — Kong (DB-less) ────────────────────────────────────
+  # Espelha rotas e JWT auth do AWS API Gateway v2 (infrastructure/terraform).
+  # Config declarativa em infrastructure/kong/kong.yml.
   api-gateway:
-    image: nginx:1.27-alpine
+    image: kong:3.7.1
     container_name: fcg-api-gateway
+    entrypoint: ["/usr/local/bin/fcg-entrypoint.sh"]
+    command: ["kong", "docker-start"]
     ports:
-      - "8080:8080"
+      - "8080:8000"   # proxy (rotas públicas/protegidas)
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /etc/kong/kong.yml
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_PROXY_LISTEN: "0.0.0.0:8000"
+      KONG_ADMIN_LISTEN: "off"
+      # Chave pública RSA usada pelo plugin JWT (referenciada via vault://env)
+      JWT_RSA_PUBLIC_KEY: "${JWT_RSA_PUBLIC_KEY}"
+      JWT_RSA_PUBLIC_KEY_PEM: "${JWT_RSA_PUBLIC_KEY_PEM:-}"
     volumes:
-      - ./infrastructure/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./infrastructure/nginx/openapi.yaml:/etc/nginx/openapi.yaml:ro
+      - ./infrastructure/kong/kong.yml:/etc/kong/kong.yml:ro
+      - ./infrastructure/kong/entrypoint.sh:/usr/local/bin/fcg-entrypoint.sh:ro
     networks:
-      - messaging   # rede compartilhada com users-api, catalog-api e swagger-ui
+      - messaging
     security_opt:
       - no-new-privileges:true
     deploy:
       resources:
         limits:
-          memory: 128m
-          cpus: "0.25"
+          memory: 512m
+          cpus: "1.0"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      test: ["CMD", "kong", "health"]
       interval: 5s
-      timeout: 3s
+      timeout: 5s
       retries: 10
-      start_period: 10s
+      start_period: 15s
     depends_on:
       users-api:
         condition: service_started
@@ -352,6 +372,13 @@ services:
       localstack:
         condition: service_healthy
     restart: on-failure
+    develop:
+      watch:
+        - action: rebuild
+          path: ../UsersAPI/src
+          ignore: [bin/, obj/]
+        - action: rebuild
+          path: ../UsersAPI/Dockerfile
 
   catalog-api:
     image: catalog-api:latest
@@ -415,6 +442,13 @@ services:
       redis:
         condition: service_healthy
     restart: on-failure
+    develop:
+      watch:
+        - action: rebuild
+          path: ../CatalogAPI/src
+          ignore: [bin/, obj/]
+        - action: rebuild
+          path: ../CatalogAPI/Dockerfile
 
   payments-api:
     image: payments-api:latest
@@ -485,6 +519,13 @@ services:
       localstack:
         condition: service_healthy
     restart: on-failure
+    develop:
+      watch:
+        - action: rebuild
+          path: ../PaymentsAPI/src
+          ignore: [bin/, obj/]
+        - action: rebuild
+          path: ../PaymentsAPI/Dockerfile
 
   # ═══════════════════════════════════════════════════════════════════════════
   # NotificationsAPI — REMOVIDO

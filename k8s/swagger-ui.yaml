@@ -1,6 +1,7 @@
 # =============================================================================
-# Swagger UI agregador — serve o próprio spec OpenAPI (montado via ConfigMap
-# swagger-spec) em /swagger/openapi.yaml. Acessível via api-gateway em /swagger.
+# Swagger UI agregador — serve o próprio spec OpenAPI (via ConfigMap
+# swagger-spec criado pelo bootstrap a partir de infrastructure/kong/).
+# Acessível via api-gateway em /swagger.
 # =============================================================================
 apiVersion: apps/v1
 kind: Deployment
@@ -27,21 +28,13 @@ spec:
           ports:
             - containerPort: 8080
           env:
-            - name: BASE_URL
-              value: /swagger
-            - name: URL
-              value: /swagger/openapi.yaml
-            - name: LAYOUT
-              value: BaseLayout
-            - name: DEEP_LINKING
-              value: "true"
+            - { name: BASE_URL,      value: /swagger }
+            - { name: URL,           value: /swagger/openapi.yaml }
+            - { name: LAYOUT,        value: BaseLayout }
+            - { name: DEEP_LINKING,  value: "true" }
           resources:
-            requests:
-              memory: "64Mi"
-              cpu: "100m"
-            limits:
-              memory: "128Mi"
-              cpu: "250m"
+            requests: { memory: "64Mi",  cpu: "100m" }
+            limits:   { memory: "128Mi", cpu: "250m" }
           volumeMounts:
             - name: swagger-spec
               mountPath: /usr/share/nginx/html/swagger/openapi.yaml

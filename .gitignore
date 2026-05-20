@@ -17,3 +17,14 @@ secrets.json
 # Kubernetes secret manifests — não commitar, usar *.example como template
 k8s/*-secret.yaml
 k8s/*-secrets.yaml
+k8s/base/*-secret.yaml
+k8s/base/*-secrets.yaml
+
+# Cache do task runner (go-task)
+.task/
+
+# Chaves JWT geradas localmente
+.keys/
+
+# Artefatos de build da Lambda
+infrastructure/localstack/.build/

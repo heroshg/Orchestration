@@ -1,31 +1,10 @@
 # =============================================================================
 # API Gateway local — Kong (DB-less). Substituto do AWS API Gateway v2.
-# Em produção: aws_apigatewayv2_api (Terraform). Aqui replica rotas + JWT.
-# kong.yml carregado via ConfigMap (configMapGenerator no kustomization.yaml,
-# fonte: infrastructure/kong/kong.yml).
-# Chave pública RSA vem do Secret users-api-secret (JWT_RSA_PUBLIC_KEY base64)
-# e é decodificada pelo entrypoint antes do Kong iniciar.
+# Os ConfigMaps 'kong-config', 'kong-entrypoint' e 'swagger-spec' são criados
+# pelo bootstrap.sh a partir de infrastructure/kong/.
+# Chave pública RSA vem do secret users-api-secret (JWT_RSA_PUBLIC_KEY base64).
 # Entrypoint do cluster: kubectl port-forward svc/api-gateway 8080:8000
 # =============================================================================
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: kong-entrypoint
-  namespace: fcg
-data:
-  entrypoint.sh: |
-    #!/usr/bin/env sh
-    set -eu
-    if [ -z "${JWT_RSA_PUBLIC_KEY_PEM:-}" ] && [ -n "${JWT_RSA_PUBLIC_KEY:-}" ]; then
-      JWT_RSA_PUBLIC_KEY_PEM="$(printf '%s' "$JWT_RSA_PUBLIC_KEY" | base64 -d)"
-      export JWT_RSA_PUBLIC_KEY_PEM
-    fi
-    if [ -z "${JWT_RSA_PUBLIC_KEY_PEM:-}" ]; then
-      echo "[kong] JWT_RSA_PUBLIC_KEY_PEM/JWT_RSA_PUBLIC_KEY ausente" >&2
-      exit 1
-    fi
-    exec /docker-entrypoint.sh "$@"
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:

@@ -196,8 +196,9 @@ resource "aws_ecs_task_definition" "users_api" {
       { name = "RabbitMQ__Password",       value = local.rmq_password },
       { name = "Jwt__RsaPrivateKey",            value = var.jwt_rsa_private_key },
       { name = "Jwt__RsaPublicKey",             value = var.jwt_rsa_public_key },
-      { name = "Jwt__Issuer",                   value = "FiapCloudGames" },
+      { name = "Jwt__Issuer",                   value = "http://${aws_eip.ecs.public_ip}:8080" },
       { name = "Jwt__Audience",                 value = "FiapCloudGames" },
+      { name = "Jwt__ExpirationMinutes",        value = "15" },
       { name = "AWS__Region",                   value = var.aws_region },
       { name = "AWS__SQS__UserCreatedQueueUrl", value = aws_sqs_queue.user_created.url }
     ]
@@ -266,7 +267,7 @@ resource "aws_ecs_task_definition" "catalog_api" {
       { name = "RabbitMQ__Username",         value = local.rmq_user },
       { name = "RabbitMQ__Password",         value = local.rmq_password },
       { name = "Jwt__RsaPublicKey",          value = var.jwt_rsa_public_key },
-      { name = "Jwt__Issuer",                value = "FiapCloudGames" },
+      { name = "Jwt__Issuer",                value = "http://${aws_eip.ecs.public_ip}:8080" },
       { name = "Jwt__Audience",              value = "FiapCloudGames" }
     ]
     logConfiguration = {
@@ -334,7 +335,7 @@ resource "aws_ecs_task_definition" "payments_api" {
       { name = "RabbitMQ__Username",               value = local.rmq_user },
       { name = "RabbitMQ__Password",               value = local.rmq_password },
       { name = "Jwt__RsaPublicKey",                value = var.jwt_rsa_public_key },
-      { name = "Jwt__Issuer",                      value = "FiapCloudGames" },
+      { name = "Jwt__Issuer",                      value = "http://${aws_eip.ecs.public_ip}:8080" },
       { name = "Jwt__Audience",                    value = "FiapCloudGames" },
       { name = "AWS__Region",                      value = var.aws_region },
       { name = "AWS__SQS__PaymentProcessedQueueUrl", value = aws_sqs_queue.payment_processed.url }

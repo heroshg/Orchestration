@@ -25,14 +25,6 @@ echo "  SQS Pay : ${SQS_PAYMENT_PROCESSED_QUEUE_URL:-'[vazio — notificações 
 echo "================================================================="
 echo ""
 
-log_info "Instalando nginx ingress controller..."
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/cloud/deploy.yaml
-kubectl wait --namespace ingress-nginx \
-  --for=condition=ready pod \
-  --selector=app.kubernetes.io/component=controller \
-  --timeout=120s
-log_success "nginx ingress controller pronto"
-
 log_info "Criando namespace..."
 kubectl apply -f "$SCRIPT_DIR/namespace.yaml"
 log_success "Namespace 'fcg' pronto"
@@ -106,9 +98,22 @@ kubectl apply -f "$SCRIPT_DIR/catalog-api.yaml"
 kubectl apply -f "$SCRIPT_DIR/payments-api.yaml"
 log_success "APIs deployadas"
 
-log_info "Deployando Ingress..."
-kubectl apply -f "$SCRIPT_DIR/ingress.yaml"
-log_success "Ingress fcg-ingress criado"
+log_info "Criando ConfigMaps do Kong (gateway) e Swagger..."
+kubectl create configmap kong-config \
+  --from-file=kong.yml="$SCRIPT_DIR/../infrastructure/kong/kong.yml" \
+  --namespace fcg --dry-run=client -o yaml | kubectl apply -f -
+kubectl create configmap kong-entrypoint \
+  --from-file=entrypoint.sh="$SCRIPT_DIR/../infrastructure/kong/entrypoint.sh" \
+  --namespace fcg --dry-run=client -o yaml | kubectl apply -f -
+kubectl create configmap swagger-spec \
+  --from-file=openapi.yaml="$SCRIPT_DIR/../infrastructure/kong/openapi.yaml" \
+  --namespace fcg --dry-run=client -o yaml | kubectl apply -f -
+log_success "ConfigMaps do gateway criados"
+
+log_info "Deployando Swagger UI + Kong API Gateway..."
+kubectl apply -f "$SCRIPT_DIR/swagger-ui.yaml"
+kubectl apply -f "$SCRIPT_DIR/api-gateway.yaml"
+log_success "Kong + Swagger UI deployados"
 
 echo ""
 log_info "Aguardando pods ficarem prontos (máx 180s)..."
@@ -123,9 +128,7 @@ kubectl get pods -n fcg
 echo ""
 echo "Próximos passos:"
 echo "  1. Verifique os pods acima — todos devem estar Running"
-echo "  2. Obtenha o IP externo do ingress:"
-echo "     kubectl get ingress fcg-ingress -n fcg"
-echo "  3. Use esse IP como users_api_url e catalog_api_url no Terraform:"
-echo "     cd ../infrastructure/terraform && cp terraform.tfvars.example terraform.tfvars"
-echo "  4. Preencha terraform.tfvars e execute: ./deploy.sh"
+echo "  2. Exponha o Kong gateway localmente:"
+echo "     kubectl port-forward svc/api-gateway 8080:8000 -n fcg"
+echo "  3. Acesse: http://localhost:8080/swagger/"
 echo ""
