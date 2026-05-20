@@ -384,52 +384,56 @@ done
 # também precisa de JWT_RSA_PRIVATE_KEY.
 ```
 
-### Passo 4 — escolher um caminho de deploy
+### Passo 4 — instalar o ingress controller (uma vez por cluster)
 
-**Caminho A — Kustomize (declarativo, recomendado):**
+```bash
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/cloud/deploy.yaml
+kubectl wait --namespace ingress-nginx \
+    --for=condition=ready pod \
+    --selector=app.kubernetes.io/component=controller \
+    --timeout=180s
+```
+
+### Passo 5 — aplicar o overlay local
 
 ```bash
 kubectl apply -k k8s/overlays/local --load-restrictor=LoadRestrictionsNone
 ```
 
-A flag `--load-restrictor=LoadRestrictionsNone` é necessária porque o `configMapGenerator` do `base/` referencia arquivos em `infrastructure/kong/` (compartilhados com o Compose, fonte única de verdade).
+A flag `--load-restrictor=LoadRestrictionsNone` é necessária porque o `configMapGenerator` do `base/` referencia arquivos em `infrastructure/nginx/` (compartilhados com o Compose — fonte única da verdade). O overlay cria o namespace `fcg`, todos os Secrets/ConfigMaps, Postgres × 3, RabbitMQ, Redis, LocalStack, as 3 APIs, o api-gateway (Nginx), o Swagger UI e o Ingress.
 
-**Caminho B — Script imperativo (`bootstrap.sh`):**
+> **Datadog mora só em prod.** O overlay `local/` não inclui agent nem `DD_API_KEY` — as APIs continuam exportando as env vars `DD_*` (vêm do base), mas como não há agent escutando em `DD_AGENT_HOST` o tracer silenciosamente desiste. Zero configuração extra para dev.
 
-```bash
-export DD_API_KEY=xxxxxxxxxxxx       # ou um valor dummy se não usar Datadog
-bash k8s/bootstrap.sh                # Windows: pwsh k8s/bootstrap.ps1
-```
-
-O bootstrap aplica secrets, manifests e ConfigMaps (`kong-config`, `kong-entrypoint`, `swagger-spec`) sem depender de Kustomize.
-
-### Passo 5 — esperar os pods + expor o Kong
+### Passo 6 — esperar os pods + acessar
 
 ```bash
 kubectl get pods -n fcg -w
 # Aguarde até todos ficarem Running. UsersAPI/CatalogAPI/PaymentsAPI podem
 # levar ~30s no primeiro start (rodam migrations do Entity Framework).
 
-# Expor o Kong gateway em http://localhost:8080
-kubectl port-forward svc/api-gateway 8080:8000 -n fcg
+# Acesso via Ingress (já publica em http://localhost)
+#   http://localhost/                Swagger UI agregado
+#   http://localhost/users/          UsersAPI
+#   http://localhost/catalog/        CatalogAPI
+#   http://localhost/payments/       PaymentsAPI
 ```
 
-### Passo 6 — testar
+### Passo 7 — testar
 
 ```bash
 # Smoke
-curl -i http://localhost:8080/api/games                # → 401 (sem token)
-curl -i http://localhost:8080/.well-known/jwks.json    # → 200
+curl -i http://localhost/catalog/api/games            # → 401 (sem token)
+curl -i http://localhost/users/.well-known/jwks.json  # → 200
 
 # Login com a credencial seed
-TOKEN=$(curl -s -X POST http://localhost:8080/api/users/login \
+TOKEN=$(curl -s -X POST http://localhost/users/api/users/login \
   -H "Content-Type: application/json" \
   -d '{"email":"admin@fgc.com","password":"Admin@123"}' | jq -r .token)
 
-curl http://localhost:8080/api/games -H "Authorization: Bearer $TOKEN"
+curl http://localhost/catalog/api/games -H "Authorization: Bearer $TOKEN"
 ```
 
-Demais exemplos (criar jogo, fluxo de compra) na seção [Como testar a aplicação](#como-testar-a-aplicação) — funcionam igual via `http://localhost:8080`.
+Demais exemplos (criar jogo, fluxo de compra) na seção [Como testar a aplicação](#como-testar-a-aplicação) — basta trocar `http://localhost:8080` por `http://localhost`.
 
 ### Acessos diretos (debug)
 
