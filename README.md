@@ -48,7 +48,26 @@ Plataforma de microsserviços .NET 8 com Postgres, RabbitMQ, Redis e LocalStack
 [UsersAPI](https://github.com/heroshg/UsersAPI) ·
 [CatalogAPI](https://github.com/heroshg/CatalogAPI) ·
 [PaymentsAPI](https://github.com/heroshg/PaymentsAPI) ·
-[NotificationsLambda](https://github.com/heroshg/NotificationsAPI)
+[NotificationsLambda](https://github.com/heroshg/NotificationsLambda) (função serverless)
+
+---
+
+## Stack escolhida
+
+| Camada | Tecnologia | Onde / por quê |
+|---|---|---|
+| Runtime | .NET 8 | APIs e Lambda |
+| API Gateway | Kong 3.7 (local) / AWS API Gateway v2 (prod) | Roteamento + JWT RS256 |
+| Persistência relacional | PostgreSQL — **um banco por serviço** | Isolamento de dados |
+| Cache | Redis (`IDistributedCache`) | Cache-aside em `UsersAPI.GetUserById` e `CatalogAPI.GetAllGames` |
+| Mensageria síncrona do domínio | RabbitMQ + MassTransit (Saga + EF Outbox) | `OrderPlacedEvent`, `PaymentProcessedEvent`, `OrderCancelledEvent` |
+| Mensageria assíncrona p/ notificações | AWS SQS (+ DLQ) | `UserCreatedEvent`, `PaymentProcessedEvent` |
+| NoSQL | AWS DynamoDB | Log de notificações enviadas (TTL 90d) |
+| Função serverless | AWS Lambda (.NET 8 arm64) | Consome SQS → grava no DynamoDB |
+| Observabilidade | **Datadog** (APM + Logs + AWS integration) | Stack escolhida da Fase 3. Tracer .NET injetado via Dockerfile (`/opt/datadog`); agent rodando em ECS / k8s sidecar; dashboards + monitors versionados via Terraform (`infrastructure/terraform/datadog*.tf`) |
+| Infra-as-code | Terraform | `infrastructure/terraform/` |
+| Orquestração local | Docker Compose + LocalStack | SQS / Lambda / DynamoDB / S3 emulados |
+| Orquestração k8s | Kustomize (`base/` + `overlays/local|prod`) | Mesma fonte de verdade do Compose |
 
 ---
 
