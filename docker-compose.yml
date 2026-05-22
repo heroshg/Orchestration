@@ -236,7 +236,7 @@ services:
   # ═══════════════════════════════════════════════════════════════════════════
 
   localstack:
-    image: localstack/localstack:3.8
+    image: localstack/localstack-pro:latest
     container_name: fcg-localstack
     ports:
       - "4566:4566"   # Edge port (todos os serviços AWS)

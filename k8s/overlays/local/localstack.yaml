@@ -46,6 +46,15 @@ spec:
             # SQS, DynamoDB, S3 e Logs continuam normais.
             - name: SKIP_LAMBDA
               value: "true"
+            # Auth token do LocalStack (free Hobby tier). Habilita o resource
+            # browser da Web UI em app.localstack.cloud. Pegue o seu em:
+            # https://app.localstack.cloud/workspace/auth-tokens
+            - name: LOCALSTACK_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: localstack-auth
+                  key: token
+                  optional: true
           readinessProbe:
             httpGet:
               path: /_localstack/health
