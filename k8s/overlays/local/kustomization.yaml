@@ -1,10 +1,11 @@
 # =============================================================================
 # Overlay LOCAL — dev em cluster local (kind / minikube / Docker Desktop).
-# Aplicar: kubectl apply -k k8s/overlays/local --load-restrictor=LoadRestrictionsNone
+# Aplicar: kubectl kustomize k8s/overlays/local --load-restrictor=LoadRestrictionsNone | kubectl apply -f -
 #
-# A flag --load-restrictor é necessária porque o configMapGenerator do base
-# referencia arquivos em infrastructure/ (compartilhados com Compose). Sem
-# ela, kustomize rejeita leituras fora do diretório por padrão.
+# `kubectl apply -k` NÃO aceita --load-restrictor (só `kubectl kustomize` e
+# `kustomize build` aceitam). A flag é necessária porque o configMapGenerator
+# do base/ referencia arquivos em infrastructure/ (compartilhados com Compose).
+# Sem ela, kustomize rejeita leituras fora do diretório por padrão.
 #
 # Pré-requisitos:
 #   1. docker build -t fcg-localstack:local infrastructure/localstack/

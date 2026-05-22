@@ -46,6 +46,9 @@ configMapGenerator:
   - name: kong-config
     files:
       - kong.yml=../../infrastructure/kong/kong.yml
+  - name: kong-entrypoint
+    files:
+      - entrypoint.sh=../../infrastructure/kong/entrypoint.sh
   - name: swagger-spec
     files:
       - openapi.yaml=../../infrastructure/kong/openapi.yaml

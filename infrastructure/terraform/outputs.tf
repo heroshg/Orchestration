@@ -4,8 +4,8 @@ output "datadog_integration_role_arn" {
 }
 
 output "datadog_external_id" {
-  value       = var.datadog_external_id
-  description = "Cole este External ID no Datadog → Integrations → AWS"
+  value       = datadog_integration_aws.fcg.external_id
+  description = "External ID gerado pelo Datadog (auto-managed pela integration)"
 }
 
 output "ecs_public_ip" {

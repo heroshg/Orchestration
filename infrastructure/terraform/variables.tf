@@ -65,8 +65,3 @@ variable "dd_extension_version" {
   default = "62"
 }
 
-variable "datadog_external_id" {
-  type        = string
-  description = "External ID do Datadog AWS Integration (obtido na UI do Datadog)"
-  default     = "fiapcloudgames-dd-integration"
-}

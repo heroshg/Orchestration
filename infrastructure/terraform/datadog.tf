@@ -1,10 +1,13 @@
 # ── Datadog AWS Integration ───────────────────────────────────────────────────
-# Liga o Datadog à conta AWS via IAM role para puxar métricas do CloudWatch.
-# Sem este recurso, o IAM role existe mas o Datadog não sabe que deve usá-lo.
+# Liga o Datadog à conta AWS via IAM role. O external_id é GERADO pelo Datadog
+# (não dá pra forçar um valor) e usado na trust policy da role abaixo.
+# Quebra de ciclo: role_name aqui é passado como string literal (não como
+# atributo da role), assim o Datadog cria a integration antes da role; a
+# trust policy referencia datadog_integration_aws.fcg.external_id (computed).
 
 resource "datadog_integration_aws" "fcg" {
   account_id = data.aws_caller_identity.current.account_id
-  role_name  = aws_iam_role.datadog_aws.name
+  role_name  = "${local.name_prefix}-datadog-aws-integration"
 
   # Sem filter_tags → coleta métricas de todos os recursos da conta
   # Namespaces habilitados por padrão incluem SQS, Lambda, ECS, API Gateway
@@ -19,7 +22,9 @@ resource "datadog_integration_aws" "fcg" {
 }
 
 # ── AWS Integration IAM Role ──────────────────────────────────────────────────
-# Permite ao Datadog ler métricas do CloudWatch para todos os serviços AWS
+# Permite ao Datadog ler métricas do CloudWatch para todos os serviços AWS.
+# A trust policy usa o external_id GERADO pelo Datadog (não um valor estático),
+# senão a integration falha silenciosamente ao assumir a role.
 
 resource "aws_iam_role" "datadog_aws" {
   name = "${local.name_prefix}-datadog-aws-integration"
@@ -31,7 +36,7 @@ resource "aws_iam_role" "datadog_aws" {
       Principal = { AWS = "arn:aws:iam::464622532012:root" }
       Action    = "sts:AssumeRole"
       Condition = {
-        StringEquals = { "sts:ExternalId" = var.datadog_external_id }
+        StringEquals = { "sts:ExternalId" = datadog_integration_aws.fcg.external_id }
       }
     }]
   })

@@ -130,7 +130,7 @@ docker build -t fcg-localstack:local infrastructure/localstack/
 
 # 2. Aplicar o overlay local (cria namespace, secrets, bancos, mensageria,
 #    LocalStack, APIs e o gateway Kong — tudo em um comando)
-kubectl apply -k k8s/overlays/local --load-restrictor=LoadRestrictionsNone
+kubectl kustomize k8s/overlays/local --load-restrictor=LoadRestrictionsNone | kubectl apply -f -
 
 # 3. Esperar tudo subir
 kubectl wait --for=condition=available deployment --all -n fcg --timeout=300s
@@ -140,9 +140,10 @@ kubectl get pods -n fcg
 kubectl port-forward -n fcg svc/api-gateway 8080:8000
 ```
 
-A flag `--load-restrictor=LoadRestrictionsNone` é necessária porque o
-`configMapGenerator` do `base/` lê `infrastructure/kong/` (mesma fonte da
-verdade do Compose).
+O pipe `kubectl kustomize … | kubectl apply -f -` é necessário porque
+`kubectl apply -k` não aceita `--load-restrictor`, e a flag é obrigatória:
+o `configMapGenerator` do `base/` lê arquivos em `infrastructure/kong/`
+(mesma fonte da verdade do Compose), fora do diretório de kustomization.
 
 **Acesso via port-forward do Kong** — `http://localhost:8080/swagger/`,
 mesmas rotas do Compose.

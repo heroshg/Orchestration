@@ -126,7 +126,7 @@ tasks:
       - task: k8s:cluster
       - task: k8s:images
       - task: k8s:secrets
-      - kubectl apply -k k8s/overlays/local --load-restrictor=LoadRestrictionsNone
+      - kubectl kustomize k8s/overlays/local --load-restrictor=LoadRestrictionsNone | kubectl apply -f -
       - kubectl wait --for=condition=ready pod -l app=api-gateway -n fcg --timeout=180s
       - echo ""
       - echo "✓ Pronto. Rode 'task k8s:forward' e acesse http://localhost:8080/swagger/"

@@ -104,8 +104,9 @@ resource "datadog_dashboard" "fcg_observability" {
         }
       }
 
+      # PaymentsAPI é worker (sem HTTP). Throughput vem das mensagens consumidas do RabbitMQ.
       request {
-        q            = "sum:trace.aspnet_core.request.hits{env:production,service:payments-api}.as_rate()"
+        q            = "sum:trace.masstransit.consume.hits{env:production,service:payments-api}.as_rate()"
         display_type = "line"
         style {
           palette    = "orange"
@@ -113,8 +114,8 @@ resource "datadog_dashboard" "fcg_observability" {
           line_width = "normal"
         }
         metadata {
-          expression = "sum:trace.aspnet_core.request.hits{env:production,service:payments-api}.as_rate()"
-          alias_name = "PaymentsAPI"
+          expression = "sum:trace.masstransit.consume.hits{env:production,service:payments-api}.as_rate()"
+          alias_name = "PaymentsAPI (consume)"
         }
       }
 
@@ -183,7 +184,7 @@ resource "datadog_dashboard" "fcg_observability" {
       }
 
       request {
-        q            = "p95:trace.aspnet_core.request{env:production,service:payments-api}*1000"
+        q            = "p95:trace.masstransit.consume{env:production,service:payments-api}*1000"
         display_type = "line"
         style {
           palette    = "orange"
@@ -191,8 +192,8 @@ resource "datadog_dashboard" "fcg_observability" {
           line_width = "normal"
         }
         metadata {
-          expression = "p95:trace.aspnet_core.request{env:production,service:payments-api}*1000"
-          alias_name = "PaymentsAPI p95"
+          expression = "p95:trace.masstransit.consume{env:production,service:payments-api}*1000"
+          alias_name = "PaymentsAPI (consume) p95"
         }
       }
 
@@ -247,7 +248,7 @@ resource "datadog_dashboard" "fcg_observability" {
       }
 
       request {
-        q            = "sum:trace.aspnet_core.request.errors{env:production,service:payments-api}.as_rate() / sum:trace.aspnet_core.request.hits{env:production,service:payments-api}.as_rate() * 100"
+        q            = "sum:trace.masstransit.consume.errors{env:production,service:payments-api}.as_rate() / sum:trace.masstransit.consume.hits{env:production,service:payments-api}.as_rate() * 100"
         display_type = "bars"
         style {
           palette    = "warm"
@@ -255,8 +256,8 @@ resource "datadog_dashboard" "fcg_observability" {
           line_width = "normal"
         }
         metadata {
-          expression = "sum:trace.aspnet_core.request.errors{env:production,service:payments-api}.as_rate() / sum:trace.aspnet_core.request.hits{env:production,service:payments-api}.as_rate() * 100"
-          alias_name = "PaymentsAPI"
+          expression = "sum:trace.masstransit.consume.errors{env:production,service:payments-api}.as_rate() / sum:trace.masstransit.consume.hits{env:production,service:payments-api}.as_rate() * 100"
+          alias_name = "PaymentsAPI (consume)"
         }
       }
 
