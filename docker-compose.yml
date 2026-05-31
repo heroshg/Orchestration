@@ -236,21 +236,21 @@ services:
   # ═══════════════════════════════════════════════════════════════════════════
 
   localstack:
-    image: localstack/localstack-pro:latest
+    image: localstack/localstack:3.7
     container_name: fcg-localstack
     ports:
       - "4566:4566"   # Edge port (todos os serviços AWS)
     environment:
-      SERVICES: "sqs,dynamodb,lambda,iam,logs,sts,cloudwatch,apigateway,apigatewayv2,s3"
+      SERVICES: "sqs,dynamodb,lambda,logs,sts,s3"
       AWS_DEFAULT_REGION: "${AWS_REGION:-us-east-1}"
       DEBUG: "0"
-      LAMBDA_EXECUTOR: "docker"
-      LAMBDA_DOCKER_NETWORK: "fcg-aws-local"
-      DOCKER_HOST: "unix:///var/run/docker.sock"
+      # LocalStack v3: desabilita executor Docker para Lambda (evita
+      # dependência do socket /var/run/docker.sock no Windows).
+      # Lambda roda in-process; SQS, DynamoDB e S3 não são afetados.
+      LAMBDA_DOCKER_ENABLED: "0"
       USERS_API_INTERNAL_URL: "http://users-api:8080"
       CATALOG_API_INTERNAL_URL: "http://catalog-api:8080"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - ./infrastructure/localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh:ro
       - ./infrastructure/localstack/.build:/opt/code/lambda:ro
     networks:
@@ -390,13 +390,18 @@ services:
       - "5002:8080"
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      ConnectionStrings__Catalog: "Host=catalog-postgres;Port=5432;Database=catalog_db;Username=postgres;Password=${POSTGRES_PASSWORD}"
       Jwt__RsaPublicKey: "${JWT_RSA_PUBLIC_KEY}"
       Jwt__Issuer: "FiapCloudGames"
       Jwt__Audience: "FiapCloudGames"
       RabbitMQ__Host: "rabbitmq"
       RabbitMQ__Username: "${RABBITMQ_USER}"
       RabbitMQ__Password: "${RABBITMQ_PASSWORD}"
+      # ─── AWS / DynamoDB (apontando para LocalStack em dev) ────────────────
+      AWS__Region: "${AWS_REGION:-us-east-1}"
+      AWS__ServiceURL: "http://localstack:4566"
+      AWS_ACCESS_KEY_ID: "test"
+      AWS_SECRET_ACCESS_KEY: "test"
+      AWS_DEFAULT_REGION: "${AWS_REGION:-us-east-1}"
       # Cache
       Redis__ConnectionString: "redis:6379,password=${REDIS_PASSWORD}"
       # ─── Datadog APM ──────────────────────────────────────────────────
@@ -420,10 +425,10 @@ services:
       com.datadoghq.tags.env: "development"
       com.datadoghq.tags.version: "1.0.0"
     networks:
-      - catalog-db
       - messaging
       - cache
       - observability
+      - aws-local
     security_opt:
       - no-new-privileges:true
     read_only: true
@@ -435,7 +440,7 @@ services:
           memory: 256m
           cpus: "0.5"
     depends_on:
-      catalog-postgres:
+      localstack:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
