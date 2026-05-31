@@ -1,9 +1,5 @@
 services:
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # Bancos de Dados — PostgreSQL
-  # ═══════════════════════════════════════════════════════════════════════════
-
   payments-postgres:
     image: postgres:16-alpine
     container_name: fcg-payments-postgres
@@ -79,10 +75,6 @@ services:
       retries: 10
       start_period: 300s
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # Cache — Redis
-  # ═══════════════════════════════════════════════════════════════════════════
-
   redis:
     image: redis:7.2-alpine
     container_name: fcg-redis
@@ -114,52 +106,6 @@ services:
       retries: 10
       start_period: 30s
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # Observabilidade — Datadog Agent (Opção B — APM gerenciado)
-  # ═══════════════════════════════════════════════════════════════════════════
-
-  datadog-agent:
-    image: gcr.io/datadoghq/agent:7.58.0
-    container_name: fcg-datadog-agent
-    environment:
-      DD_API_KEY: "${DD_API_KEY}"
-      DD_SITE: "${DD_SITE:-datadoghq.com}"
-      DD_ENV: "development"
-      DD_TAGS: "project:fiapcloudgames phase:3"
-      DD_APM_ENABLED: "true"
-      DD_APM_NON_LOCAL_TRAFFIC: "true"
-      DD_LOGS_ENABLED: "true"
-      DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL: "true"
-      DD_CONTAINER_EXCLUDE: "name:fcg-datadog-agent"
-      DD_DOGSTATSD_NON_LOCAL_TRAFFIC: "true"
-      REDIS_PASSWORD: "${REDIS_PASSWORD}"   # lida pelo template %%env_REDIS_PASSWORD%% do redisdb check
-    ports:
-      - "8126:8126"   # APM / traces
-      - "8125:8125/udp"  # DogStatsD
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /proc/:/host/proc/:ro
-      - /sys/fs/cgroup/:/host/sys/fs/cgroup:ro
-      - ./infrastructure/datadog/redisdb.yaml:/etc/datadog-agent/conf.d/redisdb.d/conf.yaml:ro
-      - ./infrastructure/datadog/disk.yaml:/etc/datadog-agent/conf.d/disk.d/conf.yaml:ro
-    networks:
-      - observability
-      - messaging
-      - cache
-    security_opt:
-      - no-new-privileges:true
-    deploy:
-      resources:
-        limits:
-          memory: 512m
-          cpus: "0.5"
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # API Gateway (local) — Nginx como substituto do AWS API Gateway v2.
-  # Em produção: aws_apigatewayv2_api (Terraform). Aqui replica rotas+CORS.
-  # Entrypoint único: http://localhost:8080
-  # ═══════════════════════════════════════════════════════════════════════════
-
   swagger-ui:
     image: swaggerapi/swagger-ui:v5.17.14
     container_name: fcg-swagger-ui
@@ -169,7 +115,6 @@ services:
       LAYOUT: BaseLayout
       DEEP_LINKING: "true"
     volumes:
-      # Spec servido pelo próprio swagger-ui (nginx interno) em /swagger/openapi.yaml
       - ./infrastructure/kong/openapi.yaml:/usr/share/nginx/html/swagger/openapi.yaml:ro
     networks:
       - messaging
@@ -181,16 +126,13 @@ services:
           memory: 128m
           cpus: "0.25"
 
-  # ─── API Gateway local — Kong (DB-less) ────────────────────────────────────
-  # Espelha rotas e JWT auth do AWS API Gateway v2 (infrastructure/terraform).
-  # Config declarativa em infrastructure/kong/kong.yml.
   api-gateway:
     image: kong:3.7.1
     container_name: fcg-api-gateway
     entrypoint: ["/usr/local/bin/fcg-entrypoint.sh"]
     command: ["kong", "docker-start"]
     ports:
-      - "8080:8000"   # proxy (rotas públicas/protegidas)
+      - "8080:8000"
     environment:
       KONG_DATABASE: "off"
       KONG_DECLARATIVE_CONFIG: /etc/kong/kong.yml
@@ -200,7 +142,6 @@ services:
       KONG_ADMIN_ERROR_LOG: /dev/stderr
       KONG_PROXY_LISTEN: "0.0.0.0:8000"
       KONG_ADMIN_LISTEN: "off"
-      # Chave pública RSA usada pelo plugin JWT (referenciada via vault://env)
       JWT_RSA_PUBLIC_KEY: "${JWT_RSA_PUBLIC_KEY}"
       JWT_RSA_PUBLIC_KEY_PEM: "${JWT_RSA_PUBLIC_KEY_PEM:-}"
     volumes:
@@ -229,24 +170,17 @@ services:
       swagger-ui:
         condition: service_started
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # AWS local — LocalStack
-  # Emula SQS + DynamoDB + Lambda + IAM. Inicializado por init-aws.sh
-  # que cria as filas, a tabela e a função (com event source mappings).
-  # ═══════════════════════════════════════════════════════════════════════════
-
   localstack:
     image: localstack/localstack:3.7
     container_name: fcg-localstack
     ports:
-      - "4566:4566"   # Edge port (todos os serviços AWS)
+      - "4566:4566"
     environment:
       SERVICES: "sqs,dynamodb,lambda,logs,sts,s3"
       AWS_DEFAULT_REGION: "${AWS_REGION:-us-east-1}"
       DEBUG: "0"
-      # LocalStack v3: desabilita executor Docker para Lambda (evita
-      # dependência do socket /var/run/docker.sock no Windows).
-      # Lambda roda in-process; SQS, DynamoDB e S3 não são afetados.
+      # Desabilita executor Docker para Lambda: Lambda roda in-process no LocalStack
+      # (evita dependência de /var/run/docker.sock — não funciona no Windows/WSL2).
       LAMBDA_DOCKER_ENABLED: "0"
       USERS_API_INTERNAL_URL: "http://users-api:8080"
       CATALOG_API_INTERNAL_URL: "http://catalog-api:8080"
@@ -263,11 +197,6 @@ services:
       timeout: 5s
       retries: 60
       start_period: 60s
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # Mensageria — RabbitMQ (desenvolvimento local)
-  # Em produção: AWS SQS (configurado via SAM em infrastructure/sam/)
-  # ═══════════════════════════════════════════════════════════════════════════
 
   rabbitmq:
     image: rabbitmq:3.13-management
@@ -293,10 +222,6 @@ services:
       retries: 15
       start_period: 300s
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # Microsserviços
-  # ═══════════════════════════════════════════════════════════════════════════
-
   users-api:
     image: users-api:latest
     build:
@@ -312,11 +237,9 @@ services:
       Jwt__RsaPublicKey: "${JWT_RSA_PUBLIC_KEY}"
       Jwt__Issuer: "FiapCloudGames"
       Jwt__Audience: "FiapCloudGames"
-      # Desenvolvimento local: usa RabbitMQ
       RabbitMQ__Host: "rabbitmq"
       RabbitMQ__Username: "${RABBITMQ_USER}"
       RabbitMQ__Password: "${RABBITMQ_PASSWORD}"
-      # ─── AWS (apontando para LocalStack em dev) ───────────────────────
       AWS__Region: "${AWS_REGION:-us-east-1}"
       AWS__SQS__UserCreatedQueueUrl: "http://localstack:4566/000000000000/fcg-local-user-created-events"
       AWS_ACCESS_KEY_ID: "test"
@@ -324,33 +247,11 @@ services:
       AWS_DEFAULT_REGION: "${AWS_REGION:-us-east-1}"
       AWS_ENDPOINT_URL: "http://localstack:4566"
       AWS_ENDPOINT_URL_SQS: "http://localstack:4566"
-      # Cache
       Redis__ConnectionString: "redis:6379,password=${REDIS_PASSWORD}"
-      # ─── Datadog APM ──────────────────────────────────────────────────
-      DD_SERVICE: "users-api"
-      DD_ENV: "development"
-      DD_VERSION: "1.0.0"
-      DD_AGENT_HOST: "datadog-agent"
-      DD_TRACE_AGENT_PORT: "8126"
-      DD_LOGS_INJECTION: "true"
-      DD_RUNTIME_METRICS_ENABLED: "true"
-      DD_TRACE_SAMPLE_RATE: "1.0"
-      DD_PROFILING_ENABLED: "true"
-      DD_TRACE_LOG_DIRECTORY: "/tmp/dd-logs"
-      DD_DOTNET_TRACER_HOME: "/app/datadog"
-      CORECLR_ENABLE_PROFILING: "1"
-      CORECLR_PROFILER: "{846F5F1C-F9AE-4B07-969E-05C26BC060D8}"
-      CORECLR_PROFILER_PATH: "/app/datadog/linux-musl-x64/Datadog.Trace.ClrProfiler.Native.so"
-      LD_PRELOAD: "/app/datadog/linux-musl-x64/Datadog.Linux.ApiWrapper.x64.so"
-    labels:
-      com.datadoghq.tags.service: "users-api"
-      com.datadoghq.tags.env: "development"
-      com.datadoghq.tags.version: "1.0.0"
     networks:
       - users-db
       - messaging
       - cache
-      - observability
       - aws-local
     security_opt:
       - no-new-privileges:true
@@ -396,38 +297,15 @@ services:
       RabbitMQ__Host: "rabbitmq"
       RabbitMQ__Username: "${RABBITMQ_USER}"
       RabbitMQ__Password: "${RABBITMQ_PASSWORD}"
-      # ─── AWS / DynamoDB (apontando para LocalStack em dev) ────────────────
       AWS__Region: "${AWS_REGION:-us-east-1}"
       AWS__ServiceURL: "http://localstack:4566"
       AWS_ACCESS_KEY_ID: "test"
       AWS_SECRET_ACCESS_KEY: "test"
       AWS_DEFAULT_REGION: "${AWS_REGION:-us-east-1}"
-      # Cache
       Redis__ConnectionString: "redis:6379,password=${REDIS_PASSWORD}"
-      # ─── Datadog APM ──────────────────────────────────────────────────
-      DD_SERVICE: "catalog-api"
-      DD_ENV: "development"
-      DD_VERSION: "1.0.0"
-      DD_AGENT_HOST: "datadog-agent"
-      DD_TRACE_AGENT_PORT: "8126"
-      DD_LOGS_INJECTION: "true"
-      DD_RUNTIME_METRICS_ENABLED: "true"
-      DD_TRACE_SAMPLE_RATE: "1.0"
-      DD_PROFILING_ENABLED: "true"
-      DD_TRACE_LOG_DIRECTORY: "/tmp/dd-logs"
-      DD_DOTNET_TRACER_HOME: "/app/datadog"
-      CORECLR_ENABLE_PROFILING: "1"
-      CORECLR_PROFILER: "{846F5F1C-F9AE-4B07-969E-05C26BC060D8}"
-      CORECLR_PROFILER_PATH: "/app/datadog/linux-musl-x64/Datadog.Trace.ClrProfiler.Native.so"
-      LD_PRELOAD: "/app/datadog/linux-musl-x64/Datadog.Linux.ApiWrapper.x64.so"
-    labels:
-      com.datadoghq.tags.service: "catalog-api"
-      com.datadoghq.tags.env: "development"
-      com.datadoghq.tags.version: "1.0.0"
     networks:
       - messaging
       - cache
-      - observability
       - aws-local
     security_opt:
       - no-new-privileges:true
@@ -469,11 +347,9 @@ services:
       Jwt__RsaPublicKey: "${JWT_RSA_PUBLIC_KEY}"
       Jwt__Issuer: "FiapCloudGames"
       Jwt__Audience: "FiapCloudGames"
-      # Desenvolvimento local: usa RabbitMQ
       RabbitMQ__Host: "rabbitmq"
       RabbitMQ__Username: "${RABBITMQ_USER}"
       RabbitMQ__Password: "${RABBITMQ_PASSWORD}"
-      # ─── AWS (apontando para LocalStack em dev) ───────────────────────
       AWS__Region: "${AWS_REGION:-us-east-1}"
       AWS__SQS__PaymentProcessedQueueUrl: "http://localstack:4566/000000000000/fcg-local-payment-processed-events"
       AWS_ACCESS_KEY_ID: "test"
@@ -481,30 +357,9 @@ services:
       AWS_DEFAULT_REGION: "${AWS_REGION:-us-east-1}"
       AWS_ENDPOINT_URL: "http://localstack:4566"
       AWS_ENDPOINT_URL_SQS: "http://localstack:4566"
-      # ─── Datadog APM ──────────────────────────────────────────────────
-      DD_SERVICE: "payments-api"
-      DD_ENV: "development"
-      DD_VERSION: "1.0.0"
-      DD_AGENT_HOST: "datadog-agent"
-      DD_TRACE_AGENT_PORT: "8126"
-      DD_LOGS_INJECTION: "true"
-      DD_RUNTIME_METRICS_ENABLED: "true"
-      DD_TRACE_SAMPLE_RATE: "1.0"
-      DD_PROFILING_ENABLED: "true"
-      DD_TRACE_LOG_DIRECTORY: "/tmp/dd-logs"
-      DD_DOTNET_TRACER_HOME: "/app/datadog"
-      CORECLR_ENABLE_PROFILING: "1"
-      CORECLR_PROFILER: "{846F5F1C-F9AE-4B07-969E-05C26BC060D8}"
-      CORECLR_PROFILER_PATH: "/app/datadog/linux-musl-x64/Datadog.Trace.ClrProfiler.Native.so"
-      LD_PRELOAD: "/app/datadog/linux-musl-x64/Datadog.Linux.ApiWrapper.x64.so"
-    labels:
-      com.datadoghq.tags.service: "payments-api"
-      com.datadoghq.tags.env: "development"
-      com.datadoghq.tags.version: "1.0.0"
     networks:
       - payments-db
       - messaging
-      - observability
       - aws-local
     security_opt:
       - no-new-privileges:true
@@ -532,12 +387,7 @@ services:
         - action: rebuild
           path: ../PaymentsAPI/Dockerfile
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # NotificationsAPI — REMOVIDO
-  # Migrado para AWS Lambda (Fase 3)
-  # Infraestrutura: infrastructure/sam/template.yaml
-  # Deploy:        infrastructure/sam/deploy.sh
-  # ═══════════════════════════════════════════════════════════════════════════
+  # NotificationsAPI removido — migrado para AWS Lambda (Fase 3)
 
 networks:
   users-db:
@@ -549,8 +399,6 @@ networks:
   messaging:
     driver: bridge
   cache:
-    driver: bridge
-  observability:
     driver: bridge
   aws-local:
     name: fcg-aws-local

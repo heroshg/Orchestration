@@ -3,7 +3,7 @@
 # Build: bash infrastructure/localstack/build-lambda.sh
 #        docker build -t fcg-localstack:local infrastructure/localstack/
 # =============================================================================
-FROM localstack/localstack-pro:latest
+FROM localstack/localstack:3.7
 
 COPY init-aws.sh           /etc/localstack/init/ready.d/init-aws.sh
 COPY .build/notifications-lambda.zip /opt/code/lambda/notifications-lambda.zip

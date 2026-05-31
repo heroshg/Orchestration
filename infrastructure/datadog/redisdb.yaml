@@ -1,8 +1,0 @@
-# Configuração do check Redis. A senha é lida da env var REDIS_PASSWORD
-# passada para o container do datadog-agent (não vai pro Datadog SaaS).
-init_config:
-
-instances:
-  - host: redis
-    port: 6379
-    password: "%%env_REDIS_PASSWORD%%"

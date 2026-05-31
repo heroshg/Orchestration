@@ -1,6 +1,0 @@
-# Disk check desabilitado em dev WSL2: /host/proc/self não existe nessa
-# topologia (limitação do Docker Desktop). A métrica de disco do host
-# não é relevante pra demonstração da aplicação.
-init_config:
-
-instances: []
