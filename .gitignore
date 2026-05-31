@@ -26,5 +26,11 @@ k8s/base/*-secrets.yaml
 # Chaves JWT geradas localmente
 .keys/
 
+# Terraform state e tfvars com valores reais
+infrastructure/terraform/terraform.tfstate
+infrastructure/terraform/terraform.tfstate.backup
+infrastructure/terraform/terraform.tfvars
+infrastructure/terraform/.terraform/
+
 # Artefatos de build da Lambda
 infrastructure/localstack/.build/

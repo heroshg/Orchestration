@@ -1,17 +1,4 @@
-﻿﻿﻿﻿# =============================================================================
-# FiapCloudGames â€” Kubernetes PROD
-# EKS / cluster Kubernetes em produÃ§Ã£o (AWS)
-#
-# PrÃ©-requisitos:
-#   1. Substitua todos os CHANGE_ME com valores reais
-#   2. Atualize as imagens ECR com o account ID e tag da versÃ£o:
-#        000000000000.dkr.ecr.us-east-1.amazonaws.com/fcg-<service>:<tag>
-#      (outputs do Terraform: ecr_users_api_url, ecr_catalog_api_url, ecr_payments_api_url)
-#   3. Gere os JWT keys: bash infrastructure/scripts/generate-jwt-keys.sh
-#   4. Aplique: kubectl apply -f k8s-prod.yaml
-# =============================================================================
-
-apiVersion: v1
+﻿apiVersion: v1
 kind: Namespace
 metadata:
   name: fcg

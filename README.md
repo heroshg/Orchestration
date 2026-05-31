@@ -154,8 +154,21 @@ Os secrets SQS (`users-api-sqs`, `payments-api-sqs`) já apontam para o LocalSta
 
 ### 4. Aplicar
 
+`k8s-dev.yaml` usa `${VAR}` para todos os segredos — os valores vêm do `.env`:
+
 ```bash
-kubectl apply -f k8s-dev.yaml
+# Linux / macOS / Git Bash
+set -a && source .env && set +a
+envsubst < k8s-dev.yaml | kubectl apply -f -
+```
+
+```powershell
+# PowerShell
+Get-Content .env | ForEach-Object {
+    if ($_ -match '^([^#][^=]+)=(.+)$') { [System.Environment]::SetEnvironmentVariable($Matches[1], $Matches[2]) }
+}
+(Get-Content k8s-dev.yaml -Raw) -replace '\$\{(\w+)\}', { [System.Environment]::GetEnvironmentVariable($_.Groups[1].Value) } |
+    kubectl apply -f -
 ```
 
 ### 5. Aguardar e acessar
