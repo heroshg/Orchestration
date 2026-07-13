@@ -1,44 +1,39 @@
-# Orchestration (plataforma) — recursos cluster/namespace-scoped do ambiente dev.
+# Orchestration (plataforma) — recursos cluster/namespace-scoped do ambiente prd.
 # Os Deployments/Services de cada API vivem no repo do próprio serviço (spec 07) — este
 # arquivo só cria o que é da plataforma: namespace, isolamento de rede, quotas e o ESO.
-# Aplicar ANTES dos serviços: kubectl apply -f k8s-dev.yaml
+# Aplicar ANTES dos serviços: kubectl apply -f k8s-prd.yaml
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: fcg-dev
+  name: fcg-prd
 ---
 apiVersion: v1
 kind: ResourceQuota
 metadata:
-  name: fcg-dev-quota
-  namespace: fcg-dev
+  name: fcg-prd-quota
+  namespace: fcg-prd
 spec:
   hard:
-    requests.cpu: "2"
-    requests.memory: 4Gi
-    limits.cpu: "4"
-    limits.memory: 8Gi
-    pods: "20"
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi
+    pods: "40"
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: default-deny-ingress
-  namespace: fcg-dev
+  namespace: fcg-prd
 spec:
   podSelector: {}
   policyTypes:
     - Ingress
 ---
-# External Secrets Operator (instalado via Helm pela plataforma) — sincroniza os secrets de
-# cada serviço a partir do AWS Secrets Manager (spec 05). ClusterSecretStore é cluster-scoped,
-# por isso vive aqui e não em cada repo de serviço.
-# ⚠️ Learner Lab: a cadeia padrão de credenciais (IMDS do node role/LabRole) FALHOU no cluster —
-# o hop limit de metadata dos nós bloqueia o pod do ESO (`context deadline exceeded` no IMDS).
-# Sem IRSA/OIDC como alternativa, usamos `auth.secretRef` apontando para um Secret populado
-# imperativamente (`kubectl create secret ... aws-lab-creds`, NUNCA commitado) com as mesmas
-# credenciais temporárias do lab. Reautenticar = recriar esse Secret a cada sessão do lab.
+# ClusterSecretStore já é criado pelo k8s-dev.yaml (recurso cluster-scoped, único no cluster);
+# reaplicar aqui é idempotente caso prd seja aplicado isoladamente. Ver k8s-dev.yaml para a nota
+# sobre `auth.secretRef` (fallback do Learner Lab — IMDS do node role não é alcançável pelo pod do ESO).
 apiVersion: external-secrets.io/v1
 kind: ClusterSecretStore
 metadata:

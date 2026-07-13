@@ -1,9 +1,11 @@
 variable "environment" {
   type    = string
-  default = "production"
+  default = "prd"
   validation {
-    condition     = contains(["development", "production"], var.environment)
-    error_message = "Must be development or production."
+    # dev / prd = provisionados no Learner Lab; homolog fica documentado (não provisionado) —
+    # ver specs/phase2/00-overview.md e 10-environments.md.
+    condition     = contains(["dev", "homolog", "prd"], var.environment)
+    error_message = "Must be dev, homolog or prd."
   }
 }
 

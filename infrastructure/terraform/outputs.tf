@@ -8,26 +8,6 @@ output "datadog_external_id" {
   description = "External ID gerado pelo Datadog (auto-managed pela integration)"
 }
 
-output "ecs_public_ip" {
-  value       = aws_eip.ecs.public_ip
-  description = "IP público do EC2 que roda o ECS"
-}
-
-output "users_api_url" {
-  value       = "http://${aws_eip.ecs.public_ip}:8080"
-  description = "URL direta da UsersAPI"
-}
-
-output "catalog_api_url" {
-  value       = "http://${aws_eip.ecs.public_ip}:8081"
-  description = "URL direta da CatalogAPI"
-}
-
-output "api_gateway_url" {
-  value       = "${aws_apigatewayv2_api.fcg.api_endpoint}/${var.environment}"
-  description = "URL do API Gateway — ponto de entrada único"
-}
-
 output "user_created_queue_url" {
   value       = aws_sqs_queue.user_created.url
   description = "URL da fila SQS UserCreatedEvent — configurar em UsersAPI"
